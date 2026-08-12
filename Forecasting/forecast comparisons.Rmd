@@ -1,0 +1,3855 @@
+---
+title: "forecast comparisons"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+
+```{r, warning = FALSE, message= FALSE}
+library(longmemo)
+library(progressr)
+library(matrixStats)
+library(far)
+library(FCVAR)
+library(fda)
+library(ftsa)
+library(refund)
+library(MASS)
+library(fdaACF)
+library(fracdiff)
+library(freqdom.fda)
+library(beepr)
+library(future)
+library(future.apply)
+library(wwntests)
+library(tidyverse)
+library(tidyr)
+library(vars)
+library(cowplot)
+library(grid)
+
+# Shared plotting settings
+plot_base_size <- 25
+plot_title_size <- 28
+strip_text_size <- 20
+axis_text_size <- 15
+shared_label_size <- 30
+
+legend_title_size <- 7.5
+legend_text_size <- 7
+legend_point_size <- 4.5
+legend_line_width <- 1.5
+
+plot_line_width <- 1
+plot_point_size <- 2.5
+reference_line_width <- 0.8
+axis_tick_width <- 0.6
+panel_spacing_size <- 0.75
+plot_margin_size <- 5
+```
+
+
+```{r}
+setwd("~/Desktop/FTS Order Selection")
+source("Order Selection/Marginal BIC.R")
+source("Order Selection/CV order selection.R")
+source("DGP non-stationary FTS/sim_FARMA.R")
+source("Fractional Differencing/local.W.R")
+source("Fractional Differencing/Covariance Matrix.R")
+source("Fractional Differencing/LPWN.R")
+source("Fractional Differencing/sieve_bootstrap.R")
+source("Fractional Differencing/Sieve-bootstrapped corrected LW estimation.R")
+source("Operator Estimation/Kuenzer FARMA Estimation.R")
+source("Forecasting/forecasting comparison.R")
+source("Forecasting/forecast_compare_sim.R")
+source("Forecasting/unified_compare_sim.R")
+```
+
+
+# Simulation to compare far() and plug-in forecasting
+
+```{r}
+grid_forecast <- data.frame(
+  T = 500,
+  d = 1,
+  p = 1L,
+  q = 0L,
+  ar_strength = 0.8,
+  ma_strength = 0.8
+)
+
+plan(multisession, workers = 10)
+handlers("progress")
+
+forecast_sim <- parallel_sim_forecasting_FARMA_compare_compact(
+  n_rep = 100,
+  grid = grid_forecast,
+  h_max = 10,
+  train_ratio = 0.6,
+  valid_ratio = 0.2,
+  alpha_set = c(0.2, 0.05),
+  window_types = c("expanding", "fixed"),
+  Npc = 1,
+  no_grid = 101,
+  far_pve = 0.95,
+  fracdiff_trim = 150
+)
+```
+
+
+
+
+## Analysis
+
+
+```{r}
+forecast_res <- readRDS("ideal_forecast_summary.rds")
+```
+
+
+### Plots of RMSE ratio
+```{r}
+make_forecast_ratio_summary <- function(df,
+                                        metric_col = "RMSE",
+                                        method_col = "method",
+                                        farma_label = "FARMA",
+                                        far_label = "FAR(1)") {
+  T_name <- if ("T" %in% names(df)) {
+    "T"
+  } else if ("n" %in% names(df)) {
+    "n"
+  } else {
+    stop("Need `T` or `n` column.")
+  }
+  
+  wide_farma <- intersect(c("RMSE_farma", "rmse_farma", "RMSE_FARMA"), names(df))
+  
+  wide_far <- intersect(c("RMSE_far", "rmse_far", "RMSE_FAR"), names(df))
+  
+  if (length(wide_farma) > 0 &&
+      length(wide_far) > 0) {
+    out <- df %>%
+      mutate(rmse_ratio =
+               .data[[wide_farma[1]]] /
+               .data[[wide_far[1]]])
+    
+  } else {
+    if (!metric_col %in% names(df)) {
+      stop("Cannot find metric column. Change `metric_col`.")
+    }
+    
+    if (!method_col %in% names(df)) {
+      stop("Cannot find method column. Change `method_col`.")
+    }
+    
+    group_vars <- intersect(
+      c(
+        T_name,
+        "h",
+        "window_type",
+        "ar_strength",
+        "ma_strength",
+        "p_true",
+        "q_true",
+        "d",
+        "d_true"
+      ),
+      names(df)
+    )
+    
+    out <- df %>%
+      mutate(
+        method_use = case_when(
+          str_detect(tolower(as.character(.data[[method_col]])), "farma") ~ farma_label,
+          
+          str_detect(
+            tolower(as.character(.data[[method_col]])),
+            "far\\(1\\)|far1|far_1|plugin|far$"
+          ) ~ far_label,
+          
+          TRUE ~ as.character(.data[[method_col]])
+        )
+      ) %>%
+      group_by(across(all_of(group_vars)), method_use) %>%
+      summarise(metric_value = mean(.data[[metric_col]], na.rm = TRUE),
+                .groups = "drop") %>%
+      pivot_wider(names_from = method_use, values_from = metric_value)
+    
+    if (!farma_label %in% names(out)) {
+      stop(
+        paste0(
+          "Cannot find FARMA method after reshaping. ",
+          "Check `method_col` and method labels."
+        )
+      )
+    }
+    
+    if (!far_label %in% names(out)) {
+      stop(
+        paste0(
+          "Cannot find FAR(1) method after reshaping. ",
+          "Check `method_col` and method labels."
+        )
+      )
+    }
+    
+    out <- out %>%
+      mutate(rmse_ratio =
+               .data[[farma_label]] /
+               .data[[far_label]])
+  }
+  
+  if (!"ar_strength" %in% names(out)) {
+    out$ar_strength <- NA_real_
+  }
+  
+  if (!"ma_strength" %in% names(out)) {
+    out$ma_strength <- NA_real_
+  }
+  
+  if (!"window_type" %in% names(out)) {
+    out$window_type <- "Window"
+  }
+  
+  psi_vals <- sort(unique(out$ar_strength[is.finite(out$ar_strength)]))
+  
+  nu_vals <- sort(unique(out$ma_strength[is.finite(out$ma_strength)]))
+  
+  out %>%
+    mutate(
+      T_value = as.numeric(.data[[T_name]]),
+      h = as.numeric(h),
+      p_true = as.integer(p_true),
+      q_true = as.integer(q_true),
+      ar_strength = as.numeric(ar_strength),
+      ma_strength = as.numeric(ma_strength),
+      
+      model = paste0("(", p_true, ",", q_true, ")"),
+      
+      model_label = paste0("FARFIMA(", p_true, ",1,", q_true, ")"),
+      
+      T_factor = factor(T_value, levels = sort(unique(T_value))),
+      
+      window_type = case_when(
+        str_detect(tolower(as.character(window_type)), "exp") ~ "Expanding",
+        
+        str_detect(tolower(as.character(window_type)), "fix") ~ "Fixed",
+        
+        TRUE ~ as.character(window_type)
+      ),
+      
+      window_type = factor(window_type, levels = c("Expanding", "Fixed")),
+      
+      model = factor(
+        model,
+        levels = c(
+          "(1,0)",
+          "(2,0)",
+          "(0,1)",
+          "(0,2)",
+          "(1,1)",
+          "(2,1)",
+          "(1,2)",
+          "(2,2)"
+        )
+      ),
+      
+      psi_label = factor(paste0("psi==", ar_strength), levels = paste0("psi==", psi_vals)),
+      
+      nu_label = factor(paste0("nu==", ma_strength), levels = paste0("nu==", nu_vals))
+    )
+}
+
+get_T_cols <- function(df) {
+  T_levels <- levels(droplevels(df$T_factor))
+  
+  cols <- c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E")
+  
+  if (length(T_levels) > length(cols)) {
+    stop("Not enough colours for the number of sample sizes.")
+  }
+  
+  setNames(cols[seq_along(T_levels)], T_levels)
+}
+
+get_window_ltys <- function(df) {
+  window_levels <- levels(droplevels(df$window_type))
+  
+  ltys <- c("solid", "dashed", "dotted", "dotdash")
+  
+  if (length(window_levels) > length(ltys)) {
+    stop("Not enough line types for the number of windows.")
+  }
+  
+  setNames(ltys[seq_along(window_levels)], window_levels)
+}
+
+get_window_shapes <- function(df) {
+  window_levels <- levels(droplevels(df$window_type))
+  
+  shapes <- c(16, 17, 15, 18)
+  
+  if (length(window_levels) > length(shapes)) {
+    stop("Not enough shapes for the number of windows.")
+  }
+  
+  setNames(shapes[seq_along(window_levels)], window_levels)
+}
+
+plot_forecast_ratio_one_model <- function(df,
+                                          model_show,
+                                          title = NULL,
+                                          show_legend = FALSE,
+                                          y_limits = NULL) {
+  df_sub <- df %>%
+    filter(as.character(model) == model_show)
+  
+  if (nrow(df_sub) == 0) {
+    stop(paste("No data found for model", model_show))
+  }
+  
+  model_clean <- gsub("[() ]", "", model_show)
+  
+  pq <- strsplit(model_clean, ",")[[1]]
+  
+  p0 <- as.integer(pq[1])
+  q0 <- as.integer(pq[2])
+  
+  g <- ggplot(
+    df_sub,
+    aes(
+      x = h,
+      y = rmse_ratio,
+      group = interaction(T_factor, window_type),
+      colour = T_factor,
+      linetype = window_type,
+      shape = window_type
+    )
+  ) +
+    geom_hline(
+      yintercept = 1,
+      colour = "black",
+      linetype = "dashed",
+      linewidth = reference_line_width
+    ) +
+    geom_line(linewidth = plot_line_width) +
+    geom_point(size = plot_point_size) +
+    scale_colour_manual(values = get_T_cols(df), drop = FALSE) +
+    scale_linetype_manual(values = get_window_ltys(df), drop = FALSE) +
+    scale_shape_manual(values = get_window_shapes(df), drop = FALSE) +
+    scale_x_continuous(breaks = sort(unique(df_sub$h)), expand = expansion(mult = c(0.02, 0.04))) +
+    labs(
+      title = title,
+      x = NULL,
+      y = NULL,
+      colour = "Sample size T",
+      linetype = "Window",
+      shape = "Window"
+    ) +
+    coord_cartesian(ylim = y_limits) +
+    theme_classic(base_size = plot_base_size) +
+    theme(
+      legend.position = if (show_legend) {
+        "top"
+      } else {
+        "none"
+      },
+      
+      legend.direction = "horizontal",
+      legend.box = "horizontal",
+      
+      legend.title = element_text(size = legend_title_size, face = "bold"),
+      
+      legend.text = element_text(size = legend_text_size),
+      
+      plot.title = element_text(
+        size = plot_title_size,
+        face = "bold",
+        hjust = 0.5
+      ),
+      
+      strip.background = element_rect(fill = "grey95", colour = "black"),
+      
+      strip.text = element_text(size = strip_text_size),
+      
+      axis.text.x = element_text(size = axis_text_size),
+      
+      axis.text.y = element_text(size = axis_text_size),
+      
+      axis.ticks = element_line(linewidth = axis_tick_width),
+      
+      axis.ticks.length = unit(3, "pt"),
+      
+      panel.spacing = unit(panel_spacing_size, "lines"),
+      
+      plot.margin = margin(
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size
+      )
+    )
+  
+  if (p0 > 0 && q0 == 0) {
+    g <- g +
+      facet_grid(. ~ psi_label, labeller = label_parsed)
+    
+  } else if (p0 == 0 && q0 > 0) {
+    g <- g +
+      facet_grid(. ~ nu_label, labeller = label_parsed)
+    
+  } else if (p0 > 0 && q0 > 0) {
+    g <- g +
+      facet_grid(nu_label ~ psi_label, labeller = label_parsed)
+  }
+  
+  g
+}
+
+make_forecast_legend_manual <- function(df) {
+  df_use <- df %>%
+    mutate(T_factor = droplevels(T_factor),
+           window_type = droplevels(window_type))
+  
+  T_levels <- levels(df_use$T_factor)
+  W_levels <- levels(df_use$window_type)
+  
+  x_title <- 0
+  x_item_start <- 3.0
+  item_gap <- 3.7
+  
+  line_length <- 0.75
+  text_gap <- 0.45
+  
+  T_df <- tibble(
+    T_factor = factor(T_levels, levels = T_levels),
+    
+    x_symbol = x_item_start +
+      line_length +
+      (seq_along(T_levels) - 1) *
+      item_gap,
+    
+    x_text = x_item_start +
+      line_length +
+      text_gap +
+      (seq_along(T_levels) - 1) *
+      item_gap,
+    
+    y = 1.00,
+    
+    label = paste0("T = ", T_levels)
+  )
+  
+  W_df <- tibble(
+    window_type = factor(W_levels, levels = W_levels),
+    
+    x_start = x_item_start +
+      (seq_along(W_levels) - 1) *
+      item_gap,
+    
+    x_end = x_item_start +
+      line_length +
+      (seq_along(W_levels) - 1) *
+      item_gap,
+    
+    x_text = x_item_start +
+      line_length +
+      text_gap +
+      (seq_along(W_levels) - 1) *
+      item_gap,
+    
+    y = 0.55,
+    label = W_levels
+  )
+  
+  xmax <- max(c(T_df$x_text + 1.8, W_df$x_text + 2.2), na.rm = TRUE)
+  
+  ggplot() +
+    annotate(
+      "text",
+      x = x_title,
+      y = 1.00,
+      label = "Sample size T",
+      hjust = 0,
+      size = legend_title_size,
+      fontface = "bold"
+    ) +
+    geom_point(
+      data = T_df,
+      aes(x = x_symbol, y = y, colour = T_factor),
+      size = legend_point_size,
+      show.legend = FALSE
+    ) +
+    geom_text(
+      data = T_df,
+      aes(x = x_text, y = y, label = label),
+      hjust = 0,
+      size = legend_text_size
+    ) +
+    annotate(
+      "text",
+      x = x_title,
+      y = 0.55,
+      label = "Window",
+      hjust = 0,
+      size = legend_title_size,
+      fontface = "bold"
+    ) +
+    geom_segment(
+      data = W_df,
+      aes(
+        x = x_start,
+        xend = x_end,
+        y = y,
+        yend = y,
+        linetype = window_type
+      ),
+      linewidth = legend_line_width,
+      colour = "black",
+      show.legend = FALSE
+    ) +
+    geom_point(
+      data = W_df,
+      aes(x = x_end, y = y, shape = window_type),
+      size = legend_point_size,
+      colour = "black",
+      show.legend = FALSE
+    ) +
+    geom_text(
+      data = W_df,
+      aes(x = x_text, y = y, label = label),
+      hjust = 0,
+      size = legend_text_size
+    ) +
+    scale_colour_manual(values = get_T_cols(df_use)) +
+    scale_linetype_manual(values = get_window_ltys(df_use)) +
+    scale_shape_manual(values = get_window_shapes(df_use)) +
+    coord_cartesian(xlim = c(0, xmax),
+                    ylim = c(0.35, 1.15),
+                    clip = "off") +
+    theme_void(base_size = plot_base_size) +
+    theme(legend.position = "none",
+          plot.margin = margin(0, 0, 0, 0))
+}
+
+combine_four_forecast_models_shared_axes <- function(df,
+                                                     models,
+                                                     titles,
+                                                     file_name = NULL,
+                                                     width = 16,
+                                                     height = 12,
+                                                     y_limits = NULL) {
+  if (length(models) != 4) {
+    stop("`models` must contain exactly four model labels.")
+  }
+  
+  if (length(titles) != 4) {
+    stop("`titles` must contain exactly four plot titles.")
+  }
+  
+  df_use <- df %>%
+    filter(as.character(model) %in% models)
+  
+  if (nrow(df_use) == 0) {
+    stop("No observations remain for the requested models.")
+  }
+  
+  if (is.null(y_limits)) {
+    y_range <- range(c(df_use$rmse_ratio, 1), na.rm = TRUE)
+    
+    pad <- 0.06 * diff(y_range)
+    
+    if (!is.finite(pad) || pad == 0) {
+      pad <- 0.05
+    }
+    
+    y_limits <- c(y_range[1] - pad, y_range[2] + pad)
+  }
+  
+  legend <- make_forecast_legend_manual(df_use)
+  
+  p1 <- plot_forecast_ratio_one_model(
+    df = df_use,
+    model_show = models[1],
+    title = titles[1],
+    show_legend = FALSE,
+    y_limits = y_limits
+  )
+  
+  p2 <- plot_forecast_ratio_one_model(
+    df = df_use,
+    model_show = models[2],
+    title = titles[2],
+    show_legend = FALSE,
+    y_limits = y_limits
+  )
+  
+  p3 <- plot_forecast_ratio_one_model(
+    df = df_use,
+    model_show = models[3],
+    title = titles[3],
+    show_legend = FALSE,
+    y_limits = y_limits
+  )
+  
+  p4 <- plot_forecast_ratio_one_model(
+    df = df_use,
+    model_show = models[4],
+    title = titles[4],
+    show_legend = FALSE,
+    y_limits = y_limits
+  )
+  
+  main_grid <- cowplot::plot_grid(p1,
+                                  p2,
+                                  p3,
+                                  p4,
+                                  ncol = 2,
+                                  align = "hv",
+                                  axis = "tblr")
+  
+  grid_with_shared_labels <- cowplot::ggdraw() +
+    cowplot::draw_plot(
+      main_grid,
+      x = 0.078,
+      y = 0.085,
+      width = 0.90,
+      height = 0.89
+    ) +
+    cowplot::draw_label(
+      "RMSE ratio to FARFIMA(1,1,0)",
+      x = 0.020,
+      y = 0.53,
+      angle = 90,
+      size = shared_label_size
+    ) +
+    cowplot::draw_label("Forecast horizon h",
+                        x = 0.53,
+                        y = 0.022,
+                        size = shared_label_size)
+  
+  final_plot <- cowplot::plot_grid(
+    legend,
+    grid_with_shared_labels,
+    ncol = 1,
+    rel_heights = c(0.13, 1)
+  )
+  
+  if (!is.null(file_name)) {
+    ggsave(
+      filename = file_name,
+      plot = final_plot,
+      width = width,
+      height = height,
+      dpi = 1200
+    )
+  }
+  
+  final_plot
+}
+```
+
+
+
+
+```{r}
+forecast_accuracy_summary <- forecast_res$ratio_summary
+
+forecast_ratio_summary <- make_forecast_ratio_summary(df = forecast_accuracy_summary,
+                                                      metric_col = "RMSE",
+                                                      method_col = "method")
+
+p_forecast_ratio <- combine_four_forecast_models_shared_axes(
+  df = forecast_ratio_summary,
+  models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
+  titles = c(
+    "FARFIMA(1,1,0)",
+    "FARFIMA(0,1,1)",
+    "FARFIMA(2,1,0)",
+    "FARFIMA(1,1,1)"
+  ),
+  file_name = "forecast_rmse_ratio_2x2.pdf",
+  width = 16,
+  height = 14
+)
+
+p_forecast_ratio
+```
+
+
+
+
+
+### Plots for ECP
+```{r}
+make_interval_plot_summary <- function(df, alpha_show = 0.05) {
+  T_name <- if ("T" %in% names(df)) {
+    "T"
+  } else if ("n" %in% names(df)) {
+    "n"
+  } else {
+    stop("Need a `T` or `n` column.")
+  }
+  
+  if (!"alpha" %in% names(df)) {
+    stop("Cannot find the `alpha` column.")
+  }
+  
+  if (!"method" %in% names(df)) {
+    stop("Cannot find the `method` column.")
+  }
+  
+  df %>%
+    filter(abs(as.numeric(alpha) - alpha_show) < 1e-10) %>%
+    mutate(
+      T_value = as.numeric(.data[[T_name]]),
+      T_factor = factor(T_value, levels = sort(unique(T_value))),
+      h = as.numeric(h),
+      ar_strength = as.numeric(ar_strength),
+      ma_strength = as.numeric(ma_strength),
+      p_true = as.integer(p_true),
+      q_true = as.integer(q_true),
+      
+      method = case_when(
+        str_detect(tolower(as.character(method)), "farma") ~ "farma",
+        
+        str_detect(tolower(as.character(method)), "far\\(1\\)|far1|far_1|far$") ~ "far",
+        
+        TRUE ~ tolower(as.character(method))
+      ),
+      
+      window_type = case_when(
+        str_detect(tolower(as.character(window_type)), "exp") ~ "Expanding",
+        
+        str_detect(tolower(as.character(window_type)), "fix") ~ "Fixed",
+        
+        TRUE ~ as.character(window_type)
+      ),
+      
+      window_type = factor(window_type, levels = c("Expanding", "Fixed")),
+      
+      model = paste0("(", p_true, ",", q_true, ")"),
+      
+      model = factor(model, levels = c("(1,0)", "(0,1)", "(2,0)", "(1,1)")),
+      
+      model_label = case_when(
+        model == "(1,0)" ~ "FARFIMA(1,d,0)",
+        model == "(0,1)" ~ "FARFIMA(0,d,1)",
+        model == "(2,0)" ~ "FARFIMA(2,d,0)",
+        model == "(1,1)" ~ "FARFIMA(1,d,1)",
+        TRUE ~ as.character(model)
+      ),
+      
+      psi_label = factor(paste0("psi==", ar_strength), levels = paste0("psi==", sort(
+        unique(ar_strength)
+      ))),
+      
+      nu_label = factor(paste0("nu==", ma_strength), levels = paste0("nu==", sort(
+        unique(ma_strength)
+      )))
+    )
+}
+
+make_ecp_summary <- function(df,
+                             alpha_show = 0.05,
+                             window_show = "Expanding") {
+  make_interval_plot_summary(df = df, alpha_show = alpha_show) %>%
+    filter(method %in% c("far", "farma"), window_type == window_show) %>%
+    mutate(
+      method = factor(
+        method,
+        levels = c("far", "farma"),
+        labels = c("FAR(1)", "FARFIMA")
+      ),
+      
+      T_factor = droplevels(T_factor),
+      window_type = droplevels(window_type)
+    )
+}
+
+method_cols_ecp <- c("FARFIMA(1,1,0)" = "#1B9E77",
+                     "Plugin forecast" = "#D95F02")
+
+get_T_shapes_ecp <- function(df) {
+  T_levels <- levels(droplevels(df$T_factor))
+  
+  shapes <- c(16, 17, 15, 18)
+  
+  if (length(T_levels) > length(shapes)) {
+    stop("Not enough shapes for the number of sample sizes.")
+  }
+  
+  setNames(shapes[seq_along(T_levels)], T_levels)
+}
+
+get_T_ltys_ecp <- function(df) {
+  T_levels <- levels(droplevels(df$T_factor))
+  
+  ltys <- c("solid", "dashed", "dotted", "dotdash")
+  
+  if (length(T_levels) > length(ltys)) {
+    stop("Not enough line types for the number of sample sizes.")
+  }
+  
+  setNames(ltys[seq_along(T_levels)], T_levels)
+}
+
+make_ecp_legend_no_window <- function(df) {
+  df_use <- df %>%
+    mutate(method = droplevels(method), T_factor = droplevels(T_factor))
+  
+  method_levels <- levels(df_use$method)
+  T_levels <- levels(df_use$T_factor)
+  
+  x_title <- 0
+  x_item_start <- 3.0
+  item_gap <- 3.9
+  line_length <- 0.75
+  text_gap <- 0.45
+  
+  method_df <- tibble(
+    method = factor(method_levels, levels = method_levels),
+    
+    x_start = x_item_start +
+      (seq_along(method_levels) - 1) * item_gap,
+    
+    x_end = x_item_start +
+      line_length +
+      (seq_along(method_levels) - 1) * item_gap,
+    
+    x_text = x_item_start +
+      line_length +
+      text_gap +
+      (seq_along(method_levels) - 1) * item_gap,
+    
+    y = 1.00,
+    label = method_levels
+  )
+  
+  T_df <- tibble(
+    T_factor = factor(T_levels, levels = T_levels),
+    
+    x_start = x_item_start +
+      (seq_along(T_levels) - 1) * item_gap,
+    
+    x_end = x_item_start +
+      line_length +
+      (seq_along(T_levels) - 1) * item_gap,
+    
+    x_text = x_item_start +
+      line_length +
+      text_gap +
+      (seq_along(T_levels) - 1) * item_gap,
+    
+    y = 0.55,
+    label = paste0("T = ", T_levels)
+  )
+  
+  xmax <- max(c(method_df$x_text + 2.2, T_df$x_text + 1.8), na.rm = TRUE)
+  
+  ggplot() +
+    annotate(
+      "text",
+      x = x_title,
+      y = 1.00,
+      label = "Method",
+      hjust = 0,
+      size = legend_title_size,
+      fontface = "bold"
+    ) +
+    geom_segment(
+      data = method_df,
+      aes(
+        x = x_start,
+        xend = x_end,
+        y = y,
+        yend = y,
+        colour = method
+      ),
+      linewidth = legend_line_width,
+      show.legend = FALSE
+    ) +
+    geom_point(
+      data = method_df,
+      aes(x = x_end, y = y, colour = method),
+      size = legend_point_size,
+      show.legend = FALSE
+    ) +
+    geom_text(
+      data = method_df,
+      aes(x = x_text, y = y, label = label),
+      hjust = 0,
+      size = legend_text_size
+    ) +
+    annotate(
+      "text",
+      x = x_title,
+      y = 0.55,
+      label = "Sample size T",
+      hjust = 0,
+      size = legend_title_size,
+      fontface = "bold"
+    ) +
+    geom_segment(
+      data = T_df,
+      aes(
+        x = x_start,
+        xend = x_end,
+        y = y,
+        yend = y,
+        linetype = T_factor
+      ),
+      linewidth = legend_line_width,
+      colour = "black",
+      show.legend = FALSE
+    ) +
+    geom_point(
+      data = T_df,
+      aes(x = x_end, y = y, shape = T_factor),
+      size = legend_point_size,
+      colour = "black",
+      show.legend = FALSE
+    ) +
+    geom_text(
+      data = T_df,
+      aes(x = x_text, y = y, label = label),
+      hjust = 0,
+      size = legend_text_size
+    ) +
+    scale_colour_manual(values = method_cols_ecp) +
+    scale_shape_manual(values = get_T_shapes_ecp(df_use)) +
+    scale_linetype_manual(values = get_T_ltys_ecp(df_use)) +
+    coord_cartesian(xlim = c(0, xmax),
+                    ylim = c(0.35, 1.15),
+                    clip = "off") +
+    theme_void(base_size = plot_base_size) +
+    theme(legend.position = "none",
+          plot.margin = margin(0, 0, 0, 0))
+}
+
+plot_ecp_one_model <- function(df,
+                               model_show,
+                               title = NULL,
+                               alpha_show = 0.05,
+                               y_limits = NULL) {
+  df_sub <- df %>%
+    filter(as.character(model) == model_show)
+  
+  if (nrow(df_sub) == 0) {
+    stop(paste("No data found for model", model_show))
+  }
+  
+  model_clean <- gsub("[() ]", "", model_show)
+  
+  pq <- strsplit(model_clean, ",")[[1]]
+  
+  p0 <- as.integer(pq[1])
+  q0 <- as.integer(pq[2])
+  
+  g <- ggplot(
+    df_sub,
+    aes(
+      x = h,
+      y = ECP,
+      group = interaction(method, T_factor),
+      colour = method,
+      linetype = T_factor,
+      shape = T_factor
+    )
+  ) +
+    geom_hline(
+      yintercept = 1 - alpha_show,
+      colour = "black",
+      linetype = "dashed",
+      linewidth = reference_line_width
+    ) +
+    geom_line(linewidth = plot_line_width) +
+    geom_point(size = plot_point_size) +
+    scale_colour_manual(values = method_cols_ecp, drop = FALSE) +
+    scale_linetype_manual(values = get_T_ltys_ecp(df), drop = FALSE) +
+    scale_shape_manual(values = get_T_shapes_ecp(df), drop = FALSE) +
+    scale_x_continuous(breaks = sort(unique(df_sub$h)), expand = expansion(mult = c(0.02, 0.04))) +
+    scale_y_continuous(
+      breaks = seq(0, 1, by = 0.05),
+      labels = scales::number_format(accuracy = 0.01)
+    ) +
+    labs(title = title, x = NULL, y = NULL) +
+    coord_cartesian(ylim = y_limits) +
+    theme_classic(base_size = plot_base_size) +
+    theme(
+      legend.position = "none",
+      
+      plot.title = element_text(
+        size = plot_title_size,
+        face = "bold",
+        hjust = 0.5
+      ),
+      
+      strip.background = element_rect(fill = "grey95", colour = "black"),
+      
+      strip.text = element_text(size = strip_text_size),
+      
+      axis.text.x = element_text(size = axis_text_size),
+      
+      axis.text.y = element_text(size = axis_text_size),
+      
+      axis.ticks = element_line(linewidth = axis_tick_width),
+      
+      axis.ticks.length = unit(3, "pt"),
+      
+      panel.spacing = unit(panel_spacing_size, "lines"),
+      
+      plot.margin = margin(
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size
+      )
+    )
+  
+  if (p0 > 0 && q0 == 0) {
+    g <- g +
+      facet_grid(. ~ psi_label, labeller = label_parsed)
+    
+  } else if (p0 == 0 && q0 > 0) {
+    g <- g +
+      facet_grid(. ~ nu_label, labeller = label_parsed)
+    
+  } else if (p0 > 0 && q0 > 0) {
+    g <- g +
+      facet_grid(nu_label ~ psi_label, labeller = label_parsed)
+  }
+  
+  g
+}
+
+combine_four_ecp_models_shared_axes <- function(df,
+                                                models,
+                                                titles,
+                                                alpha_show = 0.05,
+                                                file_name = NULL,
+                                                width = 16,
+                                                height = 12,
+                                                y_limits = NULL,
+                                                y_axis_label = "Empirical coverage probability") {
+  if (length(models) != 4) {
+    stop("`models` must contain exactly four model labels.")
+  }
+  
+  if (length(titles) != 4) {
+    stop("`titles` must contain exactly four plot titles.")
+  }
+  
+  df_use <- df %>%
+    filter(as.character(model) %in% models)
+  
+  if (nrow(df_use) == 0) {
+    stop("No observations remain for the requested models.")
+  }
+  
+  if (is.null(y_limits)) {
+    y_range <- range(c(df_use$ECP, 1 - alpha_show), na.rm = TRUE)
+    
+    pad <- 0.04 * diff(y_range)
+    
+    if (!is.finite(pad) || pad == 0) {
+      pad <- 0.03
+    }
+    
+    y_limits <- range(c(y_range[1] - pad, y_range[2] + pad), na.rm = TRUE)
+    
+    y_limits[1] <- max(0, y_limits[1])
+    
+    y_limits[2] <- min(1, y_limits[2])
+  }
+  
+  legend <- make_ecp_legend_no_window(df_use)
+  
+  p1 <- plot_ecp_one_model(
+    df = df_use,
+    model_show = models[1],
+    title = titles[1],
+    alpha_show = alpha_show,
+    y_limits = y_limits
+  )
+  
+  p2 <- plot_ecp_one_model(
+    df = df_use,
+    model_show = models[2],
+    title = titles[2],
+    alpha_show = alpha_show,
+    y_limits = y_limits
+  )
+  
+  p3 <- plot_ecp_one_model(
+    df = df_use,
+    model_show = models[3],
+    title = titles[3],
+    alpha_show = alpha_show,
+    y_limits = y_limits
+  )
+  
+  p4 <- plot_ecp_one_model(
+    df = df_use,
+    model_show = models[4],
+    title = titles[4],
+    alpha_show = alpha_show,
+    y_limits = y_limits
+  )
+  
+  main_grid <- cowplot::plot_grid(p1,
+                                  p2,
+                                  p3,
+                                  p4,
+                                  ncol = 2,
+                                  align = "hv",
+                                  axis = "tblr")
+  
+  grid_with_shared_labels <- cowplot::ggdraw() +
+    cowplot::draw_plot(
+      main_grid,
+      x = 0.078,
+      y = 0.085,
+      width = 0.90,
+      height = 0.89
+    ) +
+    cowplot::draw_label(
+      y_axis_label,
+      x = 0.020,
+      y = 0.53,
+      angle = 90,
+      size = shared_label_size
+    ) +
+    cowplot::draw_label("Forecast horizon h",
+                        x = 0.53,
+                        y = 0.022,
+                        size = shared_label_size)
+  
+  final_plot <- cowplot::plot_grid(
+    legend,
+    grid_with_shared_labels,
+    ncol = 1,
+    rel_heights = c(0.13, 1)
+  )
+  
+  if (!is.null(file_name)) {
+    ggsave(
+      filename = file_name,
+      plot = final_plot,
+      width = width,
+      height = height,
+      dpi = 1200
+    )
+  }
+  
+  final_plot
+}
+```
+
+
+
+
+
+```{r}
+ecp_summary_95_expanding <- make_ecp_summary(
+  df = forecast_res$interval_summary,
+  alpha_show = 0.05,
+  window_show = "Expanding"
+)
+
+p_ecp_95_expanding <- combine_four_ecp_models_shared_axes(
+  df = ecp_summary_95_expanding,
+  models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
+  titles = c(
+    "FARFIMA(1,1,0)",
+    "FARFIMA(0,1,1)",
+    "FARFIMA(2,1,0)",
+    "FARFIMA(1,1,1)"
+  ),
+  alpha_show = 0.05,
+  file_name = "forecast_ecp_95_expanding_2x2.pdf",
+  width = 16,
+  height = 14,
+  y_limits = c(0.85, 1.00)
+)
+
+ecp_summary_80_expanding <- make_ecp_summary(
+  df = forecast_res$interval_summary,
+  alpha_show = 0.20,
+  window_show = "Expanding"
+)
+
+p_ecp_80_expanding <- combine_four_ecp_models_shared_axes(
+  df = ecp_summary_80_expanding,
+  models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
+  titles = c(
+    "FARFIMA(1,1,0)",
+    "FARFIMA(0,1,1)",
+    "FARFIMA(2,1,0)",
+    "FARFIMA(1,1,1)"
+  ),
+  alpha_show = 0.20,
+  file_name = "forecast_ecp_80_expanding_2x2.pdf",
+  width = 16,
+  height = 14,
+  y_limits = c(0.7, 0.9)
+)
+
+ecp_summary_95_fixed <- make_ecp_summary(
+  df = forecast_res$interval_summary,
+  alpha_show = 0.05,
+  window_show = "Fixed"
+)
+
+p_ecp_95_fixed <- combine_four_ecp_models_shared_axes(
+  df = ecp_summary_95_fixed,
+  models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
+  titles = c(
+    "FARFIMA(1,1,0)",
+    "FARFIMA(0,1,1)",
+    "FARFIMA(2,1,0)",
+    "FARFIMA(1,1,1)"
+  ),
+  alpha_show = 0.05,
+  file_name = "forecast_ecp_95_fixed_2x2.pdf",
+  width = 16,
+  height = 14,
+  y_limits = c(0.85, 1.00)
+)
+
+ecp_summary_80_fixed <- make_ecp_summary(
+  df = forecast_res$interval_summary,
+  alpha_show = 0.20,
+  window_show = "Fixed"
+)
+
+p_ecp_80_fixed <- combine_four_ecp_models_shared_axes(
+  df = ecp_summary_80_fixed,
+  models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
+  titles = c(
+    "FARFIMA(1,1,0)",
+    "FARFIMA(0,1,1)",
+    "FARFIMA(2,1,0)",
+    "FARFIMA(1,1,1)"
+  ),
+  alpha_show = 0.20,
+  file_name = "forecast_ecp_80_fixed_2x2.pdf",
+  width = 16,
+  height = 14,
+  y_limits = c(0.7, 0.9)
+)
+```
+
+### Plots for Score ratio
+
+```{r}
+get_score_window_ltys <- function(df) {
+  window_levels <- levels(droplevels(df$window_type))
+  
+  ltys <- c("solid", "dashed", "dotted", "dotdash")
+  
+  setNames(ltys[seq_along(window_levels)], window_levels)
+}
+
+get_score_window_shapes <- function(df) {
+  window_levels <- levels(droplevels(df$window_type))
+  
+  shapes <- c(16, 17, 15, 18)
+  
+  setNames(shapes[seq_along(window_levels)], window_levels)
+}
+
+make_score_legend_manual <- function(df) {
+  df_use <- df %>%
+    mutate(T_factor = droplevels(T_factor),
+           window_type = droplevels(window_type))
+  
+  T_levels <- levels(df_use$T_factor)
+  window_levels <- levels(df_use$window_type)
+  
+  T_df <- tibble(
+    T_factor = factor(T_levels, levels = T_levels),
+    x_symbol = 3.8 +
+      (seq_along(T_levels) - 1) * 3.6,
+    x_text = 4.5 +
+      (seq_along(T_levels) - 1) * 3.6,
+    y = 1,
+    label = paste0("T = ", T_levels)
+  )
+  
+  window_df <- tibble(
+    window_type = factor(window_levels, levels = window_levels),
+    x_start = 3.3 +
+      (seq_along(window_levels) - 1) * 3.6,
+    x_end = 3.8 +
+      (seq_along(window_levels) - 1) * 3.6,
+    x_text = 4.5 +
+      (seq_along(window_levels) - 1) * 3.6,
+    y = 0.55,
+    label = window_levels
+  )
+  
+  xmax <- max(c(T_df$x_text + 2, window_df$x_text + 2), na.rm = TRUE)
+  
+  ggplot() +
+    annotate(
+      "text",
+      x = 0,
+      y = 1,
+      label = "Sample size T",
+      hjust = 0,
+      size = legend_title_size,
+      fontface = "bold"
+    ) +
+    geom_point(data = T_df,
+               aes(x = x_symbol, y = y, colour = T_factor),
+               size = legend_point_size) +
+    geom_text(
+      data = T_df,
+      aes(x = x_text, y = y, label = label),
+      hjust = 0,
+      size = legend_text_size
+    ) +
+    annotate(
+      "text",
+      x = 0,
+      y = 0.55,
+      label = "Window",
+      hjust = 0,
+      size = legend_title_size,
+      fontface = "bold"
+    ) +
+    geom_segment(
+      data = window_df,
+      aes(
+        x = x_start,
+        xend = x_end,
+        y = y,
+        yend = y,
+        linetype = window_type
+      ),
+      colour = "black",
+      linewidth = legend_line_width
+    ) +
+    geom_point(
+      data = window_df,
+      aes(x = x_end, y = y, shape = window_type),
+      colour = "black",
+      size = legend_point_size
+    ) +
+    geom_text(
+      data = window_df,
+      aes(x = x_text, y = y, label = label),
+      hjust = 0,
+      size = legend_text_size
+    ) +
+    scale_colour_manual(values = get_T_cols(df_use)) +
+    scale_linetype_manual(values = get_score_window_ltys(df_use)) +
+    scale_shape_manual(values = get_score_window_shapes(df_use)) +
+    coord_cartesian(xlim = c(0, xmax),
+                    ylim = c(0.35, 1.15),
+                    clip = "off") +
+    theme_void(base_size = plot_base_size) +
+    theme(legend.position = "none",
+          plot.margin = margin(0, 0, 0, 0))
+}
+
+make_score_ratio_summary <- function(df,
+                                     alpha_show = 0.05,
+                                     score_col = "Score") {
+  df_use <- make_interval_plot_summary(df = df, alpha_show = alpha_show)
+  
+  if (!score_col %in% names(df_use)) {
+    stop(paste("Cannot find score column:", score_col))
+  }
+  
+  score_summary <- df_use %>%
+    group_by(
+      T_value,
+      T_factor,
+      h,
+      ar_strength,
+      ma_strength,
+      psi_label,
+      nu_label,
+      p_true,
+      q_true,
+      model,
+      model_label,
+      window_type,
+      method
+    ) %>%
+    summarise(score_value = mean(.data[[score_col]], na.rm = TRUE),
+              .groups = "drop") %>%
+    pivot_wider(names_from = method, values_from = score_value)
+  
+  if (!"farma" %in% names(score_summary)) {
+    stop("Cannot find the FARMA score after reshaping. Check the `method` labels.")
+  }
+  
+  if (!"far" %in% names(score_summary)) {
+    stop("Cannot find the FAR(1) score after reshaping. Check the `method` labels.")
+  }
+  
+  score_summary %>%
+    mutate(score_ratio = farma / far)
+}
+
+plot_score_ratio_one_model <- function(df,
+                                       model_show,
+                                       title = NULL,
+                                       y_limits = NULL) {
+  df_sub <- df %>%
+    filter(as.character(model) == model_show)
+  
+  if (nrow(df_sub) == 0) {
+    stop(paste("No data found for model", model_show))
+  }
+  
+  model_clean <- gsub("[() ]", "", model_show)
+  
+  pq <- strsplit(model_clean, ",")[[1]]
+  
+  p0 <- as.integer(pq[1])
+  q0 <- as.integer(pq[2])
+  
+  g <- ggplot(
+    df_sub,
+    aes(
+      x = h,
+      y = score_ratio,
+      group = interaction(T_factor, window_type),
+      colour = T_factor,
+      linetype = window_type,
+      shape = window_type
+    )
+  ) +
+    geom_hline(
+      yintercept = 1,
+      colour = "black",
+      linetype = "dashed",
+      linewidth = reference_line_width
+    ) +
+    geom_line(linewidth = plot_line_width) +
+    geom_point(size = plot_point_size) +
+    scale_colour_manual(values = get_T_cols(df), drop = FALSE) +
+    scale_linetype_manual(values = get_score_window_ltys(df), drop = FALSE) +
+    scale_shape_manual(values = get_score_window_shapes(df), drop = FALSE) +
+    scale_x_continuous(breaks = sort(unique(df_sub$h)), expand = expansion(mult = c(0.02, 0.04))) +
+    labs(title = title, x = NULL, y = NULL) +
+    coord_cartesian(ylim = y_limits) +
+    theme_classic(base_size = plot_base_size) +
+    theme(
+      legend.position = "none",
+      
+      plot.title = element_text(
+        size = plot_title_size,
+        face = "bold",
+        hjust = 0.5
+      ),
+      
+      strip.background = element_rect(fill = "grey95", colour = "black"),
+      
+      strip.text = element_text(size = strip_text_size),
+      
+      axis.text.x = element_text(size = axis_text_size),
+      
+      axis.text.y = element_text(size = axis_text_size),
+      
+      axis.ticks = element_line(linewidth = axis_tick_width),
+      
+      axis.ticks.length = unit(3, "pt"),
+      
+      panel.spacing = unit(panel_spacing_size, "lines"),
+      
+      plot.margin = margin(
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size
+      )
+    )
+  
+  if (p0 > 0 && q0 == 0) {
+    g <- g +
+      facet_grid(. ~ psi_label, labeller = label_parsed)
+    
+  } else if (p0 == 0 && q0 > 0) {
+    g <- g +
+      facet_grid(. ~ nu_label, labeller = label_parsed)
+    
+  } else if (p0 > 0 && q0 > 0) {
+    g <- g +
+      facet_grid(nu_label ~ psi_label, labeller = label_parsed)
+  }
+  
+  g
+}
+
+combine_four_score_ratio_models_shared_axes <- function(df,
+                                                        models,
+                                                        titles,
+                                                        file_name = NULL,
+                                                        width = 16,
+                                                        height = 12,
+                                                        y_limits = NULL,
+                                                        y_axis_label = "Interval score ratio") {
+  if (length(models) != 4) {
+    stop("`models` must contain exactly four model labels.")
+  }
+  
+  if (length(titles) != 4) {
+    stop("`titles` must contain exactly four plot titles.")
+  }
+  
+  df_use <- df %>%
+    filter(as.character(model) %in% models)
+  
+  if (nrow(df_use) == 0) {
+    stop("No observations remain for the requested models.")
+  }
+  
+  if (is.null(y_limits)) {
+    y_range <- range(c(df_use$score_ratio, 1), na.rm = TRUE)
+    
+    pad <- 0.06 * diff(y_range)
+    
+    if (!is.finite(pad) || pad == 0) {
+      pad <- 0.05
+    }
+    
+    y_limits <- c(y_range[1] - pad, y_range[2] + pad)
+  }
+  
+  legend <- make_score_legend_manual(df_use)
+  
+  p1 <- plot_score_ratio_one_model(
+    df = df_use,
+    model_show = models[1],
+    title = titles[1],
+    y_limits = y_limits
+  )
+  
+  p2 <- plot_score_ratio_one_model(
+    df = df_use,
+    model_show = models[2],
+    title = titles[2],
+    y_limits = y_limits
+  )
+  
+  p3 <- plot_score_ratio_one_model(
+    df = df_use,
+    model_show = models[3],
+    title = titles[3],
+    y_limits = y_limits
+  )
+  
+  p4 <- plot_score_ratio_one_model(
+    df = df_use,
+    model_show = models[4],
+    title = titles[4],
+    y_limits = y_limits
+  )
+  
+  main_grid <- cowplot::plot_grid(p1,
+                                  p2,
+                                  p3,
+                                  p4,
+                                  ncol = 2,
+                                  align = "hv",
+                                  axis = "tblr")
+  
+  grid_with_shared_labels <- cowplot::ggdraw() +
+    cowplot::draw_plot(
+      main_grid,
+      x = 0.078,
+      y = 0.085,
+      width = 0.90,
+      height = 0.89
+    ) +
+    cowplot::draw_label(
+      y_axis_label,
+      x = 0.020,
+      y = 0.53,
+      angle = 90,
+      size = shared_label_size
+    ) +
+    cowplot::draw_label("Forecast horizon h",
+                        x = 0.53,
+                        y = 0.022,
+                        size = shared_label_size)
+  
+  final_plot <- cowplot::plot_grid(
+    legend,
+    grid_with_shared_labels,
+    ncol = 1,
+    rel_heights = c(0.13, 1)
+  )
+  
+  if (!is.null(file_name)) {
+    ggsave(
+      filename = file_name,
+      plot = final_plot,
+      width = width,
+      height = height,
+      dpi = 1200
+    )
+  }
+  
+  final_plot
+}
+```
+
+
+
+```{r}
+score_ratio_95 <- make_score_ratio_summary(
+  df = forecast_res$interval_summary,
+  alpha_show = 0.05,
+  score_col = "Score"
+)
+
+p_score_ratio_95 <- combine_four_score_ratio_models_shared_axes(
+  df = score_ratio_95,
+  models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
+  titles = c(
+    "FARFIMA(1,1,0)",
+    "FARFIMA(0,1,1)",
+    "FARFIMA(2,1,0)",
+    "FARFIMA(1,1,1)"
+  ),
+  file_name = "forecast_score_ratio_95_2x2.pdf",
+  width = 16,
+  height = 14,
+  y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"
+)
+
+score_ratio_80 <- make_score_ratio_summary(
+  df = forecast_res$interval_summary,
+  alpha_show = 0.20,
+  score_col = "Score"
+)
+
+p_score_ratio_80 <- combine_four_score_ratio_models_shared_axes(
+  df = score_ratio_80,
+  models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
+  titles = c(
+    "FARFIMA(1,1,0)",
+    "FARFIMA(0,1,1)",
+    "FARFIMA(2,1,0)",
+    "FARFIMA(1,1,1)"
+  ),
+  file_name = "forecast_score_ratio_80_2x2.pdf",
+  width = 16,
+  height = 14,
+  y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"
+)
+
+```
+
+
+
+
+# Simulation of unified forecasting
+
+
+```{r}
+grid_pipeline <- expand.grid(
+  T = c(500, 1000),
+  d = c(0.4, 0.8, 1.2),
+  ar_strength = c(0.2, 0.5, 0.8),
+  ma_strength = c(0.2, 0.5, 0.8),
+  model = c("1_0", "0_1", "1_1", "2_0")
+) %>%
+  dplyr::mutate(
+    p = dplyr::case_when(
+      model == "1_0" ~ 1L,
+      model == "0_1" ~ 0L,
+      model == "1_1" ~ 1L,
+      model == "2_0" ~ 2L
+    ),
+    q = dplyr::case_when(
+      model == "1_0" ~ 0L,
+      model == "0_1" ~ 1L,
+      model == "1_1" ~ 1L,
+      model == "2_0" ~ 0L
+    ),
+    ar_strength = dplyr::if_else(p == 0, 0, ar_strength),
+    ma_strength = dplyr::if_else(q == 0, 0, ma_strength)
+  ) %>%
+  dplyr::distinct() %>%
+  dplyr::select(T, d, p, q, ar_strength, ma_strength) %>%
+  dplyr::arrange(T, d, p, q, ar_strength, ma_strength)
+
+
+future::plan(
+  future::multisession,
+  workers = 10
+)
+
+progressr::handlers("progress")
+
+out_ic <- parallel_repeat_full_forecasting_pipeline_compact_order_method(
+  n_rep = 10,
+  grid = grid_pipeline,
+  order_selection_method = "both",
+  fracdiff_trim = 200,
+  far_benchmark_d = 1,
+  window_types = c("expanding", "fixed"),
+  cv_order_window_type = "expanding"
+)
+```
+
+
+```{r}
+pipeline_metrics <- extract_required_metrics_from_compact_order_method(
+  out_ic,
+  rmse_ratio_threshold = 10
+)
+```
+
+
+## Analysis 
+
+```{r}
+unified_forecast_res_main <- readRDS("pipeline_forecast_summary.rds")
+unified_forecast_res_add <- readRDS("pipeline_forecast_summary_additional.rds")
+
+append_one_component <- function(df_main, df_add) {
+  if (is.null(df_main))
+    return(df_add)
+  if (is.null(df_add))
+    return(df_main)
+  
+  if (!is.data.frame(df_main) || !is.data.frame(df_add)) {
+    stop("Both objects must be data frames / tibbles.")
+  }
+  
+  df_add_new <- df_add
+  
+  if ("scenario_id" %in% names(df_main) &&
+      "scenario_id" %in% names(df_add)) {
+    max_id <- max(df_main$scenario_id, na.rm = TRUE)
+    df_add_new <- df_add_new %>%
+      mutate(scenario_id = scenario_id + max_id)
+  }
+  
+  bind_rows(df_main, df_add_new)
+}
+
+combine_forecast_results <- function(res_main, res_add) {
+  all_names <- union(names(res_main), names(res_add))
+  
+  out <- vector("list", length(all_names))
+  names(out) <- all_names
+  
+  for (nm in all_names) {
+    out[[nm]] <- append_one_component(df_main = res_main[[nm]], df_add  = res_add[[nm]])
+  }
+  
+  out
+}
+
+unified_forecast_res <- combine_forecast_results(
+  unified_forecast_res_main,
+  unified_forecast_res_add
+)
+
+```
+
+
+
+### Estimation of d
+
+```{r}
+legend_title_size <- 18
+legend_text_size <- 16
+
+clean_d_summary <- function(df) {
+  df %>%
+    dplyr::select(-dplyr::any_of("order_selection_method")) %>%
+    dplyr::distinct() %>%
+    dplyr::mutate(
+      T_value = as.numeric(n),
+      d_true = as.numeric(d_true),
+      ar_strength = as.numeric(ar_strength),
+      ma_strength = as.numeric(ma_strength),
+      p_true = as.integer(p_true),
+      q_true = as.integer(q_true),
+      
+      model = paste0("(", p_true, ",", q_true, ")"),
+      
+      model_label = dplyr::case_when(
+        model == "(1,0)" ~ "FARFIMA(1,d,0)",
+        model == "(2,0)" ~ "FARFIMA(2,d,0)",
+        model == "(0,1)" ~ "FARFIMA(0,d,1)",
+        model == "(1,1)" ~ "FARFIMA(1,d,1)",
+        TRUE ~ model
+      ),
+      
+      MSE_d = RMSE_d^2
+    )
+}
+
+make_d_est_plot_data_singleT <- function(df, T_show, balanced_farma = TRUE) {
+  df_use <- df %>%
+    dplyr::filter(T_value == T_show,
+                  model %in% c("(1,0)", "(2,0)", "(0,1)", "(1,1)"))
+  
+  if (balanced_farma) {
+    df_use <- df_use %>%
+      dplyr::filter(model != "(1,1)" |
+                      abs(ar_strength - ma_strength) < 1e-10)
+  }
+  
+  df_use %>%
+    dplyr::mutate(
+      strength_value = dplyr::case_when(
+        model %in% c("(1,0)", "(2,0)") ~ ar_strength,
+        model == "(0,1)" ~ ma_strength,
+        model == "(1,1)" ~ ar_strength
+      ),
+      
+      strength_factor = factor(
+        strength_value,
+        levels = c(0.2, 0.5, 0.8),
+        labels = c("0.2", "0.5", "0.8")
+      ),
+      
+      model_label = factor(
+        model_label,
+        levels = c(
+          "FARFIMA(1,d,0)",
+          "FARFIMA(2,d,0)",
+          "FARFIMA(0,d,1)",
+          "FARFIMA(1,d,1)"
+        )
+      )
+    )
+}
+
+plot_d_est_metric_singleT <- function(df,
+                                      metric_col,
+                                      y_lab,
+                                      add_zero_line = FALSE,
+                                      show_x_lab = TRUE,
+                                      show_legend = TRUE,
+                                      show_strips = TRUE,
+                                      plot_title = NULL) {
+  strength_cols <- c(
+    "0.2" = "#1B9E77",
+    "0.5" = "#D95F02",
+    "0.8" = "#7570B3"
+  )
+  
+  g <- ggplot(df,
+              aes(
+                x = d_true,
+                y = .data[[metric_col]],
+                colour = strength_factor,
+                group = strength_factor
+              )) +
+    geom_line(linewidth = plot_line_width) +
+    geom_point(size = plot_point_size) +
+    facet_wrap(~ model_label, nrow = 1) +
+    scale_x_continuous(breaks = sort(unique(df$d_true)), expand = expansion(mult = c(0.02, 0.04))) +
+    scale_colour_manual(values = strength_cols, drop = FALSE) +
+    labs(
+      title = plot_title,
+      x = if (show_x_lab) {
+        "True memory parameter d"
+      } else {
+        NULL
+      },
+      y = y_lab,
+      colour = "Dependence strength"
+    ) +
+    guides(colour = guide_legend(
+      override.aes = list(linewidth = legend_line_width, size = legend_point_size)
+    )) +
+    theme_classic(base_size = plot_base_size) +
+    theme(
+      legend.position = if (show_legend) {
+        "top"
+      } else {
+        "none"
+      },
+      
+      legend.direction = "horizontal",
+      legend.box = "horizontal",
+      legend.justification = "center",
+      
+      legend.title = element_text(size = legend_title_size, face = "bold"),
+      
+      legend.text = element_text(size = legend_text_size),
+      
+      legend.key.width = unit(1.8, "lines"),
+      
+      legend.spacing.x = unit(0.5, "lines"),
+      
+      strip.background = if (show_strips) {
+        element_rect(fill = "grey95", colour = "black")
+      } else {
+        element_blank()
+      },
+      
+      strip.text = if (show_strips) {
+        element_text(size = strip_text_size)
+      } else {
+        element_blank()
+      },
+      
+      axis.text.x = element_text(
+        size = axis_text_size,
+        angle = 45,
+        hjust = 1
+      ),
+      
+      axis.text.y = element_text(size = axis_text_size),
+      
+      axis.title.x = element_text(size = shared_label_size),
+      
+      axis.title.y = element_text(size = shared_label_size),
+      
+      axis.ticks = element_line(linewidth = axis_tick_width),
+      
+      axis.ticks.length = unit(3, "pt"),
+      
+      plot.title = element_text(
+        size = plot_title_size,
+        face = "bold",
+        hjust = 0.5
+      ),
+      
+      panel.spacing = unit(panel_spacing_size, "lines"),
+      
+      plot.margin = margin(
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size
+      )
+    )
+  
+  if (add_zero_line) {
+    g <- g +
+      geom_hline(
+        yintercept = 0,
+        colour = "black",
+        linetype = "dashed",
+        linewidth = reference_line_width
+      )
+  }
+  
+  g
+}
+
+plot_d_estimation_two_panel_singleT <- function(df,
+                                                T_show,
+                                                file_name = NULL,
+                                                width = 16,
+                                                height = 10) {
+  df_plot <- make_d_est_plot_data_singleT(df = df,
+                                          T_show = T_show,
+                                          balanced_farma = TRUE)
+  
+  p_bias <- plot_d_est_metric_singleT(
+    df = df_plot,
+    metric_col = "mean_d_bias",
+    y_lab = "Mean bias",
+    add_zero_line = TRUE,
+    show_x_lab = FALSE,
+    show_legend = TRUE,
+    show_strips = TRUE,
+    plot_title = NULL
+  )
+  
+  p_mse <- plot_d_est_metric_singleT(
+    df = df_plot,
+    metric_col = "MSE_d",
+    y_lab = "MSE",
+    add_zero_line = FALSE,
+    show_x_lab = FALSE,
+    show_legend = FALSE,
+    show_strips = FALSE,
+    plot_title = NULL
+  )
+  
+  main_grid <- cowplot::plot_grid(
+    p_bias,
+    p_mse,
+    ncol = 1,
+    align = "v",
+    axis = "lr",
+    rel_heights = c(1, 1)
+  )
+  
+  final_plot <- cowplot::ggdraw() +
+    cowplot::draw_plot(
+      main_grid,
+      x = 0,
+      y = 0.075,
+      width = 1,
+      height = 0.925
+    ) +
+    cowplot::draw_label("True memory parameter d",
+                        x = 0.53,
+                        y = 0.018,
+                        size = shared_label_size)
+  
+  if (!is.null(file_name)) {
+    ggsave(
+      filename = file_name,
+      plot = final_plot,
+      width = width,
+      height = height,
+      dpi = 1200
+    )
+  }
+  
+  final_plot
+}
+
+d_est_summary_clean <- clean_d_summary(unified_forecast_res$d_summary)
+
+p_d_T500 <- plot_d_estimation_two_panel_singleT(
+  df = d_est_summary_clean,
+  T_show = 500,
+  file_name = "unified_d_estimation_T500.pdf",
+  width = 16,
+  height = 14
+)
+
+p_d_T1000 <- plot_d_estimation_two_panel_singleT(
+  df = d_est_summary_clean,
+  T_show = 1000,
+  file_name = "unified_d_estimation_T1000.pdf",
+  width = 16,
+  height = 14
+)
+```
+
+
+
+
+
+
+
+
+### Order selection accuracy
+
+```{r}
+# Restore the compact legend used by the remaining figures.
+legend_title_size <- 7.5
+legend_text_size <- 7
+
+method_cols_order <- c("Functional IC" = "#D95F02", "CV" = "#7570B3")
+
+method_ltys_order <- c("Functional IC" = "solid", "CV" = "dashed")
+
+method_shapes_order <- c("Functional IC" = 16, "CV" = 17)
+
+make_order_accuracy_plot_data <- function(df, metric_col = "order_accuracy") {
+  if (!metric_col %in% names(df)) {
+    stop(paste("Cannot find metric column:", metric_col))
+  }
+  
+  df %>%
+    mutate(
+      T_value = as.numeric(n),
+      d_true = as.numeric(d_true),
+      ar_strength = as.numeric(ar_strength),
+      ma_strength = as.numeric(ma_strength),
+      p_true = as.integer(p_true),
+      q_true = as.integer(q_true),
+      
+      model = paste0("(", p_true, ",", q_true, ")"),
+      
+      model = factor(model, levels = c("(1,0)", "(2,0)", "(0,1)", "(1,1)")),
+      
+      model_title = case_when(
+        model == "(1,0)" ~ "FARFIMA(1,d,0)",
+        model == "(2,0)" ~ "FARFIMA(2,d,0)",
+        model == "(0,1)" ~ "FARFIMA(0,d,1)",
+        model == "(1,1)" ~ "FARFIMA(1,d,1)",
+        TRUE ~ as.character(model)
+      ),
+      
+      psi_label = factor(paste0("psi==", ar_strength), levels = paste0("psi==", sort(
+        unique(ar_strength)
+      ))),
+      
+      nu_label = factor(paste0("nu==", ma_strength), levels = paste0("nu==", sort(
+        unique(ma_strength)
+      ))),
+      
+      method = case_when(
+        order_selection_method == "adaptive_ic" ~ "Functional IC",
+        order_selection_method == "cv_expanding" ~ "CV",
+        TRUE ~ order_selection_method
+      ),
+      
+      method = factor(method, levels = c("Functional IC", "CV")),
+      
+      accuracy_value = .data[[metric_col]]
+    )
+}
+
+make_order_method_legend <- function() {
+  legend_df <- tibble(
+    method = factor(c("Functional IC", "CV"), levels = c("Functional IC", "CV")),
+    x_start = c(3.2, 7.0),
+    x_end = c(3.95, 7.75),
+    x_text = c(4.25, 8.05),
+    y = 1
+  )
+  
+  ggplot(legend_df) +
+    annotate(
+      "text",
+      x = 0,
+      y = 1,
+      label = "Order selection",
+      hjust = 0,
+      size = legend_title_size,
+      fontface = "bold"
+    ) +
+    geom_segment(
+      aes(
+        x = x_start,
+        xend = x_end,
+        y = y,
+        yend = y,
+        colour = method,
+        linetype = method
+      ),
+      linewidth = legend_line_width,
+      show.legend = FALSE
+    ) +
+    geom_point(
+      aes(
+        x = x_end,
+        y = y,
+        colour = method,
+        shape = method
+      ),
+      size = legend_point_size,
+      show.legend = FALSE
+    ) +
+    geom_text(aes(x = x_text, y = y, label = method),
+              hjust = 0,
+              size = legend_text_size) +
+    scale_colour_manual(values = method_cols_order) +
+    scale_linetype_manual(values = method_ltys_order) +
+    scale_shape_manual(values = method_shapes_order) +
+    coord_cartesian(xlim = c(0, 11),
+                    ylim = c(0.85, 1.15),
+                    clip = "off") +
+    theme_void(base_size = plot_base_size) +
+    theme(legend.position = "none",
+          plot.margin = margin(0, 0, 0, 0))
+}
+
+plot_order_accuracy_one_model_by_d <- function(df,
+                                               model_show,
+                                               T_show,
+                                               title = NULL,
+                                               y_limits = c(0, 1.02)) {
+  df_sub <- df %>%
+    filter(as.character(model) == model_show, T_value == T_show)
+  
+  if (nrow(df_sub) == 0) {
+    stop(paste("No data found for model", model_show, "and T =", T_show))
+  }
+  
+  model_clean <- gsub("[() ]", "", model_show)
+  
+  pq <- strsplit(model_clean, ",")[[1]]
+  
+  p0 <- as.integer(pq[1])
+  q0 <- as.integer(pq[2])
+  
+  g <- ggplot(
+    df_sub,
+    aes(
+      x = d_true,
+      y = accuracy_value,
+      group = method,
+      colour = method,
+      linetype = method,
+      shape = method
+    )
+  ) +
+    geom_line(linewidth = plot_line_width) +
+    geom_point(size = plot_point_size) +
+    scale_colour_manual(values = method_cols_order, drop = FALSE) +
+    scale_linetype_manual(values = method_ltys_order, drop = FALSE) +
+    scale_shape_manual(values = method_shapes_order, drop = FALSE) +
+    scale_y_continuous(
+      limits = y_limits,
+      breaks = seq(0, 1, by = 0.2),
+      expand = expansion(mult = c(0.01, 0.03))
+    ) +
+    scale_x_continuous(breaks = sort(unique(df_sub$d_true)), expand = expansion(mult = c(0.02, 0.04))) +
+    labs(title = title, x = NULL, y = NULL) +
+    theme_classic(base_size = plot_base_size) +
+    theme(
+      legend.position = "none",
+      
+      plot.title = element_text(
+        size = plot_title_size,
+        face = "bold",
+        hjust = 0.5
+      ),
+      
+      strip.background = element_rect(fill = "grey95", colour = "black"),
+      
+      strip.text = element_text(size = strip_text_size),
+      
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1,
+        size = axis_text_size
+      ),
+      
+      axis.text.y = element_text(size = axis_text_size),
+      
+      axis.ticks = element_line(linewidth = axis_tick_width),
+      
+      axis.ticks.length = unit(3, "pt"),
+      
+      panel.spacing = unit(panel_spacing_size, "lines"),
+      
+      plot.margin = margin(
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size
+      )
+    )
+  
+  if (p0 > 0 && q0 == 0) {
+    g <- g +
+      facet_grid(. ~ psi_label, labeller = label_parsed)
+    
+  } else if (p0 == 0 && q0 > 0) {
+    g <- g +
+      facet_grid(. ~ nu_label, labeller = label_parsed)
+    
+  } else if (p0 > 0 && q0 > 0) {
+    g <- g +
+      facet_grid(nu_label ~ psi_label, labeller = label_parsed)
+  }
+  
+  g
+}
+
+combine_four_order_accuracy_fixedT <- function(df,
+                                               T_show,
+                                               file_name = NULL,
+                                               width = 16,
+                                               height = 12,
+                                               y_limits = c(0, 1.02)) {
+  legend <- make_order_method_legend()
+  
+  p1 <- plot_order_accuracy_one_model_by_d(
+    df = df,
+    model_show = "(1,0)",
+    T_show = T_show,
+    title = "FARFIMA(1,d,0)",
+    y_limits = y_limits
+  )
+  
+  p2 <- plot_order_accuracy_one_model_by_d(
+    df = df,
+    model_show = "(2,0)",
+    T_show = T_show,
+    title = "FARFIMA(2,d,0)",
+    y_limits = y_limits
+  )
+  
+  p3 <- plot_order_accuracy_one_model_by_d(
+    df = df,
+    model_show = "(0,1)",
+    T_show = T_show,
+    title = "FARFIMA(0,d,1)",
+    y_limits = y_limits
+  )
+  
+  p4 <- plot_order_accuracy_one_model_by_d(
+    df = df,
+    model_show = "(1,1)",
+    T_show = T_show,
+    title = "FARFIMA(1,d,1)",
+    y_limits = y_limits
+  )
+  
+  main_grid <- cowplot::plot_grid(p1,
+                                  p2,
+                                  p3,
+                                  p4,
+                                  ncol = 2,
+                                  align = "hv",
+                                  axis = "tblr")
+  
+  grid_with_shared_labels <- cowplot::ggdraw() +
+    cowplot::draw_plot(
+      main_grid,
+      x = 0.078,
+      y = 0.085,
+      width = 0.90,
+      height = 0.89
+    ) +
+    cowplot::draw_label(
+      "Selection accuracy",
+      x = 0.020,
+      y = 0.53,
+      angle = 90,
+      size = shared_label_size
+    ) +
+    cowplot::draw_label("True memory parameter d",
+                        x = 0.53,
+                        y = 0.022,
+                        size = shared_label_size)
+  
+  final_plot <- cowplot::plot_grid(
+    legend,
+    grid_with_shared_labels,
+    ncol = 1,
+    rel_heights = c(0.13, 1)
+  )
+  
+  if (!is.null(file_name)) {
+    ggsave(
+      filename = file_name,
+      plot = final_plot,
+      width = width,
+      height = height,
+      dpi = 1200
+    )
+  }
+  
+  final_plot
+}
+
+order_acc_unified <- make_order_accuracy_plot_data(
+  df = unified_forecast_res$order_accuracy,
+  metric_col = "order_accuracy"
+)
+```
+
+
+```{r}
+p_order_T1000 <- combine_four_order_accuracy_fixedT(
+  df = order_acc_unified,
+  T_show = 1000,
+  file_name = "unified_order_accuracy_T1000_2x2.pdf",
+  width = 20,
+  height = 15
+)
+
+p_order_T500 <- combine_four_order_accuracy_fixedT(
+  df = order_acc_unified,
+  T_show = 500,
+  file_name = "unified_order_accuracy_T500_2x2.pdf",
+  width = 20,
+  height = 15
+)
+```
+
+
+
+
+
+### Plots of RMSE ratio
+
+
+```{r}
+method_cols_unified <- c("Functional IC" = "#D95F02", "CV" = "#7570B3")
+
+method_ltys_unified <- c("Functional IC" = "solid", "CV" = "dashed")
+
+method_shapes_unified <- c("Functional IC" = 16, "CV" = 17)
+
+make_unified_balanced_ratio_summary <- function(df,
+                                                window_show = "expanding",
+                                                T_show = 1000) {
+  T_name <- if ("T" %in% names(df)) {
+    "T"
+  } else if ("n" %in% names(df)) {
+    "n"
+  } else {
+    stop("Need `T` or `n` column.")
+  }
+  
+  df_use <- df %>%
+    mutate(
+      T_value = as.numeric(.data[[T_name]]),
+      d_true = as.numeric(d_true),
+      h = as.numeric(h),
+      p_true = as.integer(p_true),
+      q_true = as.integer(q_true),
+      ar_strength = as.numeric(ar_strength),
+      ma_strength = as.numeric(ma_strength),
+      
+      window_type = case_when(
+        str_detect(tolower(as.character(window_type)), "exp") ~ "Expanding",
+        
+        str_detect(tolower(as.character(window_type)), "fix") ~ "Fixed",
+        
+        TRUE ~ as.character(window_type)
+      ),
+      
+      order_selection_method = case_when(
+        order_selection_method == "adaptive_ic" ~ "Functional IC",
+        order_selection_method == "cv_expanding" ~ "CV",
+        TRUE ~ as.character(order_selection_method)
+      ),
+      
+      model = paste0("(", p_true, ",", q_true, ")")
+    )
+  
+  if (!"RMSE_ratio" %in% names(df_use)) {
+    df_use <- df_use %>%
+      mutate(RMSE_ratio = RMSE_farma / RMSE_far)
+  }
+  
+  window_show_clean <- case_when(
+    str_detect(tolower(window_show), "exp") ~ "Expanding",
+    
+    str_detect(tolower(window_show), "fix") ~ "Fixed",
+    
+    TRUE ~ window_show
+  )
+  
+  df_use <- df_use %>%
+    filter(
+      window_type == window_show_clean,
+      T_value == T_show,
+      model %in% c("(1,0)", "(0,1)", "(2,0)", "(1,1)")
+    ) %>%
+    filter((p_true > 0 & q_true == 0) |
+             (p_true == 0 & q_true > 0) |
+             (p_true > 0 &
+                q_true > 0 &
+                abs(ar_strength - ma_strength) < 1e-10)) %>%
+    mutate(
+      model_title = case_when(
+        model == "(1,0)" ~ "FARFIMA(1,d,0)",
+        model == "(0,1)" ~ "FARFIMA(0,d,1)",
+        model == "(2,0)" ~ "FARFIMA(2,d,0)",
+        model == "(1,1)" ~ "FARFIMA(1,d,1)",
+        TRUE ~ model
+      ),
+      
+      d_label = paste0("d==", d_true),
+      
+      strength_value = case_when(
+        p_true > 0 & q_true == 0 ~ ar_strength,
+        p_true == 0 & q_true > 0 ~ ma_strength,
+        p_true > 0 & q_true > 0 ~ ar_strength,
+        TRUE ~ NA_real_
+      ),
+      
+      strength_label = case_when(
+        p_true > 0 & q_true == 0 ~ paste0("psi==", ar_strength),
+        
+        p_true == 0 & q_true > 0 ~ paste0("nu==", ma_strength),
+        
+        p_true > 0 & q_true > 0 ~ paste0("psi~'='~nu~'='~", ar_strength),
+        
+        TRUE ~ NA_character_
+      ),
+      
+      order_selection_method = factor(order_selection_method, levels = c("Functional IC", "CV")),
+      
+      model = factor(model, levels = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"))
+    )
+  
+  d_levels <- df_use %>%
+    distinct(d_true, d_label) %>%
+    arrange(d_true) %>%
+    pull(d_label)
+  
+  strength_levels <- df_use %>%
+    distinct(strength_value, strength_label) %>%
+    arrange(strength_value) %>%
+    pull(strength_label)
+  
+  df_use %>%
+    mutate(
+      d_label = factor(d_label, levels = d_levels),
+      
+      strength_label = factor(strength_label, levels = strength_levels)
+    ) %>%
+    group_by(
+      T_value,
+      d_true,
+      d_label,
+      strength_value,
+      strength_label,
+      h,
+      p_true,
+      q_true,
+      model,
+      model_title,
+      order_selection_method
+    ) %>%
+    summarise(
+      RMSE_ratio = mean(RMSE_ratio, na.rm = TRUE),
+      
+      RMSE_far = mean(RMSE_far, na.rm = TRUE),
+      
+      RMSE_farma = mean(RMSE_farma, na.rm = TRUE),
+      
+      n_rep_used = mean(n_rep_used, na.rm = TRUE),
+      
+      .groups = "drop"
+    )
+}
+
+make_unified_method_legend <- function() {
+  legend_df <- tibble(
+    order_selection_method = factor(c("Functional IC", "CV"), levels = c("Functional IC", "CV")),
+    x_start = c(3.0, 7.0),
+    x_end = c(3.75, 7.75),
+    x_text = c(4.08, 8.08),
+    y = 1
+  )
+  
+  ggplot(legend_df) +
+    annotate(
+      "text",
+      x = 0,
+      y = 1,
+      label = "Order selection",
+      hjust = 0,
+      size = legend_title_size,
+      fontface = "bold"
+    ) +
+    geom_segment(
+      aes(
+        x = x_start,
+        xend = x_end,
+        y = y,
+        yend = y,
+        colour = order_selection_method,
+        linetype = order_selection_method
+      ),
+      linewidth = legend_line_width,
+      show.legend = FALSE
+    ) +
+    geom_point(
+      aes(
+        x = x_end,
+        y = y,
+        colour = order_selection_method,
+        shape = order_selection_method
+      ),
+      size = legend_point_size,
+      show.legend = FALSE
+    ) +
+    geom_text(
+      aes(x = x_text, y = y, label = order_selection_method),
+      hjust = 0,
+      size = legend_text_size
+    ) +
+    scale_colour_manual(values = method_cols_unified) +
+    scale_linetype_manual(values = method_ltys_unified) +
+    scale_shape_manual(values = method_shapes_unified) +
+    coord_cartesian(xlim = c(0, 12),
+                    ylim = c(0.85, 1.15),
+                    clip = "off") +
+    theme_void(base_size = plot_base_size) +
+    theme(legend.position = "none",
+          plot.margin = margin(0, 0, 0, 0))
+}
+
+plot_unified_balanced_one_model <- function(df, model_show, y_limits = NULL) {
+  df_sub <- df %>%
+    filter(as.character(model) == model_show)
+  
+  if (nrow(df_sub) == 0) {
+    stop(paste("No data found for model", model_show))
+  }
+  
+  title_use <- unique(df_sub$model_title)[1]
+  
+  if (is.null(y_limits)) {
+    y_range <- range(c(df_sub$RMSE_ratio, 1), na.rm = TRUE)
+    
+    pad <- 0.06 * diff(y_range)
+    
+    if (!is.finite(pad) || pad == 0) {
+      pad <- 0.05
+    }
+    
+    y_limits <- range(c(y_range[1] - pad, y_range[2] + pad), na.rm = TRUE)
+  }
+  
+  ggplot(
+    df_sub,
+    aes(
+      x = h,
+      y = RMSE_ratio,
+      group = order_selection_method,
+      colour = order_selection_method,
+      linetype = order_selection_method,
+      shape = order_selection_method
+    )
+  ) +
+    geom_hline(
+      yintercept = 1,
+      colour = "black",
+      linetype = "dashed",
+      linewidth = reference_line_width
+    ) +
+    geom_line(linewidth = plot_line_width) +
+    geom_point(size = plot_point_size) +
+    scale_colour_manual(values = method_cols_unified, drop = FALSE) +
+    scale_linetype_manual(values = method_ltys_unified, drop = FALSE) +
+    scale_shape_manual(values = method_shapes_unified, drop = FALSE) +
+    scale_x_continuous(breaks = sort(unique(df_sub$h)), expand = expansion(mult = c(0.02, 0.04))) +
+    coord_cartesian(ylim = y_limits) +
+    facet_grid(d_label ~ strength_label, labeller = label_parsed) +
+    labs(title = title_use, x = NULL, y = NULL) +
+    theme_classic(base_size = plot_base_size) +
+    theme(
+      legend.position = "none",
+      
+      plot.title = element_text(
+        size = plot_title_size,
+        face = "bold",
+        hjust = 0.5
+      ),
+      
+      strip.background = element_rect(fill = "grey95", colour = "black"),
+      
+      strip.text = element_text(size = strip_text_size),
+      
+      axis.text.x = element_text(size = axis_text_size),
+      
+      axis.text.y = element_text(size = axis_text_size),
+      
+      axis.ticks = element_line(linewidth = axis_tick_width),
+      
+      axis.ticks.length = unit(3, "pt"),
+      
+      panel.spacing = unit(panel_spacing_size, "lines"),
+      
+      plot.margin = margin(
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size
+      )
+    )
+}
+
+combine_four_unified_rmse_ratio_models <- function(df,
+                                                   file_name = NULL,
+                                                   width = 16,
+                                                   height = 12,
+                                                   common_y = FALSE) {
+  models <- c("(1,0)", "(0,1)", "(2,0)", "(1,1)")
+  
+  df_use <- df %>%
+    filter(as.character(model) %in% models)
+  
+  legend <- make_unified_method_legend()
+  
+  y_limits <- NULL
+  
+  if (common_y) {
+    y_range <- range(c(df_use$RMSE_ratio, 1), na.rm = TRUE)
+    
+    pad <- 0.06 * diff(y_range)
+    
+    if (!is.finite(pad) || pad == 0) {
+      pad <- 0.05
+    }
+    
+    y_limits <- range(c(y_range[1] - pad, y_range[2] + pad), na.rm = TRUE)
+  }
+  
+  p1 <- plot_unified_balanced_one_model(df = df_use,
+                                        model_show = "(1,0)",
+                                        y_limits = y_limits)
+  
+  p2 <- plot_unified_balanced_one_model(df = df_use,
+                                        model_show = "(0,1)",
+                                        y_limits = y_limits)
+  
+  p3 <- plot_unified_balanced_one_model(df = df_use,
+                                        model_show = "(2,0)",
+                                        y_limits = y_limits)
+  
+  p4 <- plot_unified_balanced_one_model(df = df_use,
+                                        model_show = "(1,1)",
+                                        y_limits = y_limits)
+  
+  main_grid <- cowplot::plot_grid(p1,
+                                  p2,
+                                  p3,
+                                  p4,
+                                  ncol = 2,
+                                  align = "hv",
+                                  axis = "tblr")
+  
+  grid_with_shared_labels <- cowplot::ggdraw() +
+    cowplot::draw_plot(
+      main_grid,
+      x = 0.078,
+      y = 0.085,
+      width = 0.90,
+      height = 0.89
+    ) +
+    cowplot::draw_label(
+      "RMSE ratio to FARFIMA(1,1,0)",
+      x = 0.020,
+      y = 0.53,
+      angle = 90,
+      size = shared_label_size
+    ) +
+    cowplot::draw_label("Forecast horizon h",
+                        x = 0.53,
+                        y = 0.022,
+                        size = shared_label_size)
+  
+  final_plot <- cowplot::plot_grid(
+    legend,
+    grid_with_shared_labels,
+    ncol = 1,
+    rel_heights = c(0.13, 1)
+  )
+  
+  if (!is.null(file_name)) {
+    ggsave(
+      filename = file_name,
+      plot = final_plot,
+      width = width,
+      height = height,
+      dpi = 1200
+    )
+  }
+  
+  final_plot
+}
+
+unified_balanced_ratio_T1000_expanding <-
+  make_unified_balanced_ratio_summary(
+    df = unified_forecast_res$ratio_summary %>%
+      filter(d_true %in% c(0.2, 0.6, 1, 1.4)),
+    window_show = "expanding",
+    T_show = 1000
+  )
+
+```
+
+
+```{r}
+p_unified_rmse_ratio_2x2 <-
+  combine_four_unified_rmse_ratio_models(
+    df = unified_balanced_ratio_T1000_expanding,
+    file_name = "unified_rmse_ratio_balanced_expanding_T1000_2x2.pdf",
+    width = 20,
+    height = 15,
+    common_y = FALSE
+  )
+```
+
+
+
+
+### Plots for ECP
+
+
+```{r}
+benchmark_label <- "FARFIMA(1,1,0)"
+
+method_cols_unified_ecp <- c(
+  "FARFIMA(1,1,0)" = "#1B9E77",
+  "Functional IC" = "#D95F02",
+  "CV" = "#7570B3"
+)
+
+method_ltys_unified_ecp <- c(
+  "FARFIMA(1,1,0)" = "solid",
+  "Functional IC" = "solid",
+  "CV" = "dashed"
+)
+
+method_shapes_unified_ecp <- c(
+  "FARFIMA(1,1,0)" = 15,
+  "Functional IC" = 16,
+  "CV" = 17
+)
+
+prepare_unified_ecp_data <- function(df,
+                                     alpha_show,
+                                     T_show = 1000,
+                                     window_show = "expanding") {
+  
+  df %>%
+    filter(
+      alpha == alpha_show,
+      n == T_show,
+      tolower(window_type) == tolower(window_show)
+    ) %>%
+    mutate(
+      forecast_method = case_when(
+        tolower(as.character(method)) %in% c("far", "far(1)", "benchmark") ~ benchmark_label,
+        tolower(as.character(method)) %in% c("farma") &
+          order_selection_method == "adaptive_ic" ~ "Functional IC",
+        tolower(as.character(method)) %in% c("farma") &
+          order_selection_method == "cv_expanding" ~ "CV",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    filter(!is.na(forecast_method)) %>%
+    group_by(
+      n,
+      d_true,
+      ar_strength,
+      ma_strength,
+      p_true,
+      q_true,
+      alpha,
+      h,
+      forecast_method
+    ) %>%
+    summarise(
+      ECP = mean(ECP, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      model = paste0("(", p_true, ",", q_true, ")"),
+      
+      model = factor(
+        model,
+        levels = c(
+          "(1,0)",
+          "(0,1)",
+          "(2,0)",
+          "(1,1)"
+        )
+      ),
+      
+      d_label = factor(
+        paste0("d==", d_true),
+        levels = paste0(
+          "d==",
+          sort(unique(d_true))
+        )
+      ),
+      
+      psi_label = factor(
+        paste0("psi==", ar_strength),
+        levels = paste0(
+          "psi==",
+          sort(unique(ar_strength))
+        )
+      ),
+      
+      nu_label = factor(
+        paste0("nu==", ma_strength),
+        levels = paste0(
+          "nu==",
+          sort(unique(ma_strength))
+        )
+      ),
+      
+      farma_label = factor(
+        paste0(
+          "psi~'='~nu~'='~",
+          ar_strength
+        ),
+        levels = paste0(
+          "psi~'='~nu~'='~",
+          sort(unique(ar_strength))
+        )
+      ),
+      
+      forecast_method = factor(
+        forecast_method,
+        levels = c(
+          benchmark_label,
+          "Functional IC",
+          "CV"
+        )
+      )
+    )
+}
+
+make_unified_ecp_method_legend <- function() {
+  
+  legend_df <- tibble(
+    forecast_method = factor(
+      c(
+        benchmark_label,
+        "Functional IC",
+        "CV"
+      ),
+      levels = c(
+        benchmark_label,
+        "Functional IC",
+        "CV"
+      )
+    ),
+    x_start = c(3.2, 8.0, 11.6),
+    x_end   = c(3.7, 8.5, 12.1),
+    x_text  = c(4.1, 8.9, 12.5),
+    y = 1
+  )
+  
+  ggplot(legend_df) +
+    annotate(
+      "text",
+      x = 0,
+      y = 1,
+      label = "Forecasting method",
+      hjust = 0,
+      size = legend_title_size,
+      fontface = "bold"
+    ) +
+    geom_segment(
+      aes(
+        x = x_start,
+        xend = x_end,
+        y = y,
+        yend = y,
+        colour = forecast_method,
+        linetype = forecast_method
+      ),
+      linewidth = legend_line_width,
+      show.legend = FALSE
+    ) +
+    geom_point(
+      aes(
+        x = x_end,
+        y = y,
+        colour = forecast_method,
+        shape = forecast_method
+      ),
+      size = legend_point_size,
+      show.legend = FALSE
+    ) +
+    geom_text(
+      aes(
+        x = x_text,
+        y = y,
+        label = forecast_method
+      ),
+      hjust = 0,
+      size = legend_text_size
+    ) +
+    scale_colour_manual(
+      values = method_cols_unified_ecp,
+      drop = FALSE
+    ) +
+    scale_linetype_manual(
+      values = method_ltys_unified_ecp,
+      drop = FALSE
+    ) +
+    scale_shape_manual(
+      values = method_shapes_unified_ecp,
+      drop = FALSE
+    ) +
+    coord_cartesian(
+      xlim = c(0, 15.5),
+      ylim = c(0.85, 1.15),
+      clip = "off"
+    ) +
+    theme_void(
+      base_size = plot_base_size
+    ) +
+    theme(
+      legend.position = "none",
+      plot.margin = margin(0, 0, 0, 0)
+    )
+}
+
+plot_unified_ecp_one_model <- function(df,
+                                       model_show,
+                                       title = NULL,
+                                       alpha_show = 0.05,
+                                       y_limits = c(0.85, 1.00)) {
+  
+  df_sub <- df %>%
+    filter(
+      as.character(model) == model_show
+    )
+  
+  if (model_show == "(1,1)") {
+    df_sub <- df_sub %>%
+      filter(
+        abs(ar_strength - ma_strength) < 1e-10
+      )
+  }
+  
+  if (nrow(df_sub) == 0) {
+    stop(
+      paste(
+        "No data found for model",
+        model_show
+      )
+    )
+  }
+  
+  g <- ggplot(
+    df_sub,
+    aes(
+      x = h,
+      y = ECP,
+      group = forecast_method,
+      colour = forecast_method,
+      linetype = forecast_method,
+      shape = forecast_method
+    )
+  ) +
+    geom_hline(
+      yintercept = 1 - alpha_show,
+      colour = "black",
+      linetype = "dashed",
+      linewidth = reference_line_width
+    ) +
+    geom_line(
+      linewidth = plot_line_width
+    ) +
+    geom_point(
+      size = plot_point_size
+    ) +
+    scale_colour_manual(
+      values = method_cols_unified_ecp,
+      drop = FALSE
+    ) +
+    scale_linetype_manual(
+      values = method_ltys_unified_ecp,
+      drop = FALSE
+    ) +
+    scale_shape_manual(
+      values = method_shapes_unified_ecp,
+      drop = FALSE
+    ) +
+    scale_x_continuous(
+      breaks = sort(
+        unique(df_sub$h)
+      ),
+      expand = expansion(
+        mult = c(0.02, 0.04)
+      )
+    ) +
+    coord_cartesian(
+      ylim = y_limits
+    ) +
+    labs(
+      title = title,
+      x = NULL,
+      y = NULL
+    ) +
+    theme_classic(
+      base_size = plot_base_size
+    ) +
+    theme(
+      legend.position = "none",
+      
+      plot.title = element_text(
+        size = plot_title_size,
+        face = "bold",
+        hjust = 0.5
+      ),
+      
+      strip.background = element_rect(
+        fill = "grey95",
+        colour = "black"
+      ),
+      
+      strip.text = element_text(
+        size = strip_text_size
+      ),
+      
+      axis.text.x = element_text(
+        size = axis_text_size
+      ),
+      
+      axis.text.y = element_text(
+        size = axis_text_size
+      ),
+      
+      axis.ticks = element_line(
+        linewidth = axis_tick_width
+      ),
+      
+      axis.ticks.length = unit(
+        3,
+        "pt"
+      ),
+      
+      panel.spacing = unit(
+        panel_spacing_size,
+        "lines"
+      ),
+      
+      plot.margin = margin(
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size
+      )
+    )
+  
+  if (model_show %in% c("(1,0)", "(2,0)")) {
+    
+    g <- g +
+      facet_grid(
+        d_label ~ psi_label,
+        labeller = label_parsed
+      )
+    
+  } else if (model_show == "(0,1)") {
+    
+    g <- g +
+      facet_grid(
+        d_label ~ nu_label,
+        labeller = label_parsed
+      )
+    
+  } else if (model_show == "(1,1)") {
+    
+    g <- g +
+      facet_grid(
+        d_label ~ farma_label,
+        labeller = label_parsed
+      )
+  }
+  
+  g
+}
+
+combine_four_unified_ecp_models_shared_axes <- function(
+    df,
+    alpha_show = 0.05,
+    file_name = NULL,
+    width = 16,
+    height = 12,
+    y_limits = c(0.85, 1.00)) {
+  
+  legend <- make_unified_ecp_method_legend()
+  
+  p1 <- plot_unified_ecp_one_model(
+    df = df,
+    model_show = "(1,0)",
+    title = "FARFIMA(1,d,0)",
+    alpha_show = alpha_show,
+    y_limits = y_limits
+  )
+  
+  p2 <- plot_unified_ecp_one_model(
+    df = df,
+    model_show = "(0,1)",
+    title = "FARFIMA(0,d,1)",
+    alpha_show = alpha_show,
+    y_limits = y_limits
+  )
+  
+  p3 <- plot_unified_ecp_one_model(
+    df = df,
+    model_show = "(2,0)",
+    title = "FARFIMA(2,d,0)",
+    alpha_show = alpha_show,
+    y_limits = y_limits
+  )
+  
+  p4 <- plot_unified_ecp_one_model(
+    df = df,
+    model_show = "(1,1)",
+    title = "FARFIMA(1,d,1)",
+    alpha_show = alpha_show,
+    y_limits = y_limits
+  )
+  
+  main_grid <- cowplot::plot_grid(
+    p1,
+    p2,
+    p3,
+    p4,
+    ncol = 2,
+    align = "hv",
+    axis = "tblr"
+  )
+  
+  grid_with_shared_labels <- cowplot::ggdraw() +
+    cowplot::draw_plot(
+      main_grid,
+      x = 0.078,
+      y = 0.085,
+      width = 0.90,
+      height = 0.89
+    ) +
+    cowplot::draw_label(
+      "Empirical coverage probability",
+      x = 0.020,
+      y = 0.53,
+      angle = 90,
+      size = shared_label_size
+    ) +
+    cowplot::draw_label(
+      "Forecast horizon h",
+      x = 0.53,
+      y = 0.022,
+      size = shared_label_size
+    )
+  
+  final_plot <- cowplot::plot_grid(
+    legend,
+    grid_with_shared_labels,
+    ncol = 1,
+    rel_heights = c(0.13, 1)
+  )
+  
+  if (!is.null(file_name)) {
+    ggsave(
+      filename = file_name,
+      plot = final_plot,
+      width = width,
+      height = height,
+      dpi = 1200
+    )
+  }
+  
+  final_plot
+}
+
+unified_ecp_95_expanding <- prepare_unified_ecp_data(
+  df = unified_forecast_res$interval_summary %>%
+    filter(d_true %in% c(0.2, 0.6, 1, 1.4)),
+  alpha_show = 0.05,
+  T_show = 1000,
+  window_show = "expanding"
+)
+
+unified_ecp_80_expanding <- prepare_unified_ecp_data(
+  df = unified_forecast_res$interval_summary %>%
+    filter(d_true %in% c(0.2, 0.6, 1, 1.4)),
+  alpha_show = 0.20,
+  T_show = 1000,
+  window_show = "expanding"
+)
+
+```
+
+
+
+```{r}
+p_unified_ecp_95_expanding <-
+  combine_four_unified_ecp_models_shared_axes(
+    df = unified_ecp_95_expanding,
+    alpha_show = 0.05,
+    file_name = "unified_ecp_95_expanding_2x2.pdf",
+    width = 20,
+    height = 15,
+    y_limits = c(0.9, 1.00)
+  )
+
+p_unified_ecp_80_expanding <-
+  combine_four_unified_ecp_models_shared_axes(
+    df = unified_ecp_80_expanding,
+    alpha_show = 0.20,
+    file_name = "unified_ecp_80_expanding_2x2.pdf",
+    width = 20,
+    height = 15,
+    y_limits = c(0.75, 0.85)
+  )
+
+p_unified_ecp_95_expanding
+p_unified_ecp_80_expanding
+```
+
+
+
+
+### Plots for Score ratio
+
+```{r}
+method_cols_score_ratio <- c(
+  "Functional IC" = "#D95F02",
+  "CV" = "#7570B3"
+)
+
+method_ltys_score_ratio <- c(
+  "Functional IC" = "solid",
+  "CV" = "dashed"
+)
+
+method_shapes_score_ratio <- c(
+  "Functional IC" = 16,
+  "CV" = 17
+)
+
+prepare_unified_score_ratio_data <- function(df,
+                                             alpha_show,
+                                             T_show = 1000,
+                                             window_show = "expanding") {
+  
+  df_use <- df %>%
+    filter(
+      abs(alpha - alpha_show) < 1e-10,
+      n == T_show,
+      tolower(window_type) == tolower(window_show)
+    ) %>%
+    mutate(
+      forecast_method = case_when(
+        tolower(as.character(method)) %in% c("far", "far(1)", "benchmark") ~ "FARFIMA(1,1,0)",
+        
+        tolower(as.character(method)) == "farma" &
+          order_selection_method == "adaptive_ic" ~ "Functional IC",
+        
+        tolower(as.character(method)) == "farma" &
+          order_selection_method == "cv_expanding" ~ "CV",
+        
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    filter(!is.na(forecast_method)) %>%
+    group_by(
+      n,
+      d_true,
+      ar_strength,
+      ma_strength,
+      p_true,
+      q_true,
+      alpha,
+      h,
+      forecast_method
+    ) %>%
+    summarise(
+      Score = mean(Score, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    pivot_wider(
+      names_from = forecast_method,
+      values_from = Score
+    )
+  
+  df_use %>%
+    mutate(
+      score_ratio_adaptive = `Functional IC` / `FARFIMA(1,1,0)`,
+      score_ratio_cv = CV / `FARFIMA(1,1,0)`
+    ) %>%
+    select(
+      n,
+      d_true,
+      ar_strength,
+      ma_strength,
+      p_true,
+      q_true,
+      alpha,
+      h,
+      score_ratio_adaptive,
+      score_ratio_cv
+    ) %>%
+    pivot_longer(
+      cols = c(
+        score_ratio_adaptive,
+        score_ratio_cv
+      ),
+      names_to = "order_selection_method",
+      values_to = "score_ratio"
+    ) %>%
+    mutate(
+      order_selection_method = case_when(
+        order_selection_method == "score_ratio_adaptive" ~ "Functional IC",
+        order_selection_method == "score_ratio_cv" ~ "CV",
+        TRUE ~ order_selection_method
+      ),
+      
+      order_selection_method = factor(
+        order_selection_method,
+        levels = c(
+          "Functional IC",
+          "CV"
+        )
+      ),
+      
+      model = paste0(
+        "(",
+        p_true,
+        ",",
+        q_true,
+        ")"
+      ),
+      
+      model = factor(
+        model,
+        levels = c(
+          "(1,0)",
+          "(0,1)",
+          "(2,0)",
+          "(1,1)"
+        )
+      ),
+      
+      d_label = factor(
+        paste0("d==", d_true),
+        levels = paste0(
+          "d==",
+          sort(unique(d_true))
+        )
+      ),
+      
+      psi_label = factor(
+        paste0("psi==", ar_strength),
+        levels = paste0(
+          "psi==",
+          sort(unique(ar_strength))
+        )
+      ),
+      
+      nu_label = factor(
+        paste0("nu==", ma_strength),
+        levels = paste0(
+          "nu==",
+          sort(unique(ma_strength))
+        )
+      ),
+      
+      farma_label = factor(
+        paste0(
+          "psi~'='~nu~'='~",
+          ar_strength
+        ),
+        levels = paste0(
+          "psi~'='~nu~'='~",
+          sort(unique(ar_strength))
+        )
+      )
+    )
+}
+
+make_score_ratio_legend <- function() {
+  
+  legend_df <- tibble(
+    order_selection_method = factor(
+      c(
+        "Functional IC",
+        "CV"
+      ),
+      levels = c(
+        "Functional IC",
+        "CV"
+      )
+    ),
+    x_start = c(3.5, 7.3),
+    x_end = c(4.0, 7.8),
+    x_text = c(4.3, 8.1),
+    y = 1
+  )
+  
+  ggplot(legend_df) +
+    annotate(
+      "text",
+      x = 0,
+      y = 1,
+      label = "Order selection",
+      hjust = 0,
+      size = legend_title_size,
+      fontface = "bold"
+    ) +
+    geom_segment(
+      aes(
+        x = x_start,
+        xend = x_end,
+        y = y,
+        yend = y,
+        colour = order_selection_method,
+        linetype = order_selection_method
+      ),
+      linewidth = legend_line_width,
+      show.legend = FALSE
+    ) +
+    geom_point(
+      aes(
+        x = x_end,
+        y = y,
+        colour = order_selection_method,
+        shape = order_selection_method
+      ),
+      size = legend_point_size,
+      show.legend = FALSE
+    ) +
+    geom_text(
+      aes(
+        x = x_text,
+        y = y,
+        label = order_selection_method
+      ),
+      hjust = 0,
+      size = legend_text_size
+    ) +
+    scale_colour_manual(
+      values = method_cols_score_ratio
+    ) +
+    scale_linetype_manual(
+      values = method_ltys_score_ratio
+    ) +
+    scale_shape_manual(
+      values = method_shapes_score_ratio
+    ) +
+    coord_cartesian(
+      xlim = c(0, 11),
+      ylim = c(0.85, 1.15),
+      clip = "off"
+    ) +
+    theme_void(
+      base_size = plot_base_size
+    ) +
+    theme(
+      legend.position = "none",
+      plot.margin = margin(0, 0, 0, 0)
+    )
+}
+
+plot_unified_score_ratio_one_model <- function(df,
+                                               model_show,
+                                               title = NULL,
+                                               y_limits = NULL) {
+  
+  df_sub <- df %>%
+    filter(
+      as.character(model) == model_show
+    )
+  
+  if (model_show == "(1,1)") {
+    
+    df_sub <- df_sub %>%
+      filter(
+        abs(ar_strength - ma_strength) < 1e-10
+      )
+  }
+  
+  if (nrow(df_sub) == 0) {
+    stop(
+      paste(
+        "No data found for model",
+        model_show
+      )
+    )
+  }
+  
+  g <- ggplot(
+    df_sub,
+    aes(
+      x = h,
+      y = score_ratio,
+      group = order_selection_method,
+      colour = order_selection_method,
+      linetype = order_selection_method,
+      shape = order_selection_method
+    )
+  ) +
+    geom_hline(
+      yintercept = 1,
+      colour = "black",
+      linetype = "dashed",
+      linewidth = reference_line_width
+    ) +
+    geom_line(
+      linewidth = plot_line_width
+    ) +
+    geom_point(
+      size = plot_point_size
+    ) +
+    scale_colour_manual(
+      values = method_cols_score_ratio,
+      drop = FALSE
+    ) +
+    scale_linetype_manual(
+      values = method_ltys_score_ratio,
+      drop = FALSE
+    ) +
+    scale_shape_manual(
+      values = method_shapes_score_ratio,
+      drop = FALSE
+    ) +
+    scale_x_continuous(
+      breaks = sort(
+        unique(df_sub$h)
+      ),
+      expand = expansion(
+        mult = c(0.02, 0.04)
+      )
+    ) +
+    labs(
+      title = title,
+      x = NULL,
+      y = NULL
+    ) +
+    coord_cartesian(
+      ylim = y_limits
+    ) +
+    theme_classic(
+      base_size = plot_base_size
+    ) +
+    theme(
+      legend.position = "none",
+      
+      plot.title = element_text(
+        size = plot_title_size,
+        face = "bold",
+        hjust = 0.5
+      ),
+      
+      strip.background = element_rect(
+        fill = "grey95",
+        colour = "black"
+      ),
+      
+      strip.text = element_text(
+        size = strip_text_size
+      ),
+      
+      axis.text.x = element_text(
+        size = axis_text_size
+      ),
+      
+      axis.text.y = element_text(
+        size = axis_text_size
+      ),
+      
+      axis.ticks = element_line(
+        linewidth = axis_tick_width
+      ),
+      
+      axis.ticks.length = unit(
+        3,
+        "pt"
+      ),
+      
+      panel.spacing = unit(
+        panel_spacing_size,
+        "lines"
+      ),
+      
+      plot.margin = margin(
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size,
+        plot_margin_size
+      )
+    )
+  
+  if (model_show %in% c("(1,0)", "(2,0)")) {
+    
+    g <- g +
+      facet_grid(
+        d_label ~ psi_label,
+        labeller = label_parsed
+      )
+    
+  } else if (model_show == "(0,1)") {
+    
+    g <- g +
+      facet_grid(
+        d_label ~ nu_label,
+        labeller = label_parsed
+      )
+    
+  } else if (model_show == "(1,1)") {
+    
+    g <- g +
+      facet_grid(
+        d_label ~ farma_label,
+        labeller = label_parsed
+      )
+  }
+  
+  g
+}
+
+combine_four_unified_score_ratio_models_shared_axes <- function(
+    df,
+    file_name = NULL,
+    width = 16,
+    height = 12,
+    y_limits = NULL) {
+  
+  if (is.null(y_limits)) {
+    
+    y_range <- range(
+      c(
+        df$score_ratio,
+        1
+      ),
+      na.rm = TRUE
+    )
+    
+    pad <- 0.06 * diff(y_range)
+    
+    if (!is.finite(pad) || pad == 0) {
+      pad <- 0.05
+    }
+    
+    y_limits <- c(
+      y_range[1] - pad,
+      y_range[2] + pad
+    )
+  }
+  
+  legend <- make_score_ratio_legend()
+  
+  p1 <- plot_unified_score_ratio_one_model(
+    df = df,
+    model_show = "(1,0)",
+    title = "FARFIMA(1,d,0)",
+    y_limits = y_limits
+  )
+  
+  p2 <- plot_unified_score_ratio_one_model(
+    df = df,
+    model_show = "(0,1)",
+    title = "FARFIMA(0,d,1)",
+    y_limits = y_limits
+  )
+  
+  p3 <- plot_unified_score_ratio_one_model(
+    df = df,
+    model_show = "(2,0)",
+    title = "FARFIMA(2,d,0)",
+    y_limits = y_limits
+  )
+  
+  p4 <- plot_unified_score_ratio_one_model(
+    df = df,
+    model_show = "(1,1)",
+    title = "FARFIMA(1,d,1)",
+    y_limits = y_limits
+  )
+  
+  main_grid <- cowplot::plot_grid(
+    p1,
+    p2,
+    p3,
+    p4,
+    ncol = 2,
+    align = "hv",
+    axis = "tblr"
+  )
+  
+  grid_with_shared_labels <- cowplot::ggdraw() +
+    cowplot::draw_plot(
+      main_grid,
+      x = 0.078,
+      y = 0.085,
+      width = 0.90,
+      height = 0.89
+    ) +
+    cowplot::draw_label(
+      "Interval score ratio to FARFIMA(1,1,0)",
+      x = 0.020,
+      y = 0.53,
+      angle = 90,
+      size = shared_label_size
+    ) +
+    cowplot::draw_label(
+      "Forecast horizon h",
+      x = 0.53,
+      y = 0.022,
+      size = shared_label_size
+    )
+  
+  final_plot <- cowplot::plot_grid(
+    legend,
+    grid_with_shared_labels,
+    ncol = 1,
+    rel_heights = c(0.13, 1)
+  )
+  
+  if (!is.null(file_name)) {
+    
+    ggsave(
+      filename = file_name,
+      plot = final_plot,
+      width = width,
+      height = height,
+      dpi = 1200
+    )
+  }
+  
+  final_plot
+}
+
+unified_score_ratio_95_expanding <- prepare_unified_score_ratio_data(
+  df = unified_forecast_res$interval_summary %>%
+    filter(
+      d_true %in% c(
+        0.2,
+        0.6,
+        1,
+        1.4
+      )
+    ),
+  alpha_show = 0.05,
+  T_show = 1000,
+  window_show = "expanding"
+)
+
+unified_score_ratio_80_expanding <- prepare_unified_score_ratio_data(
+  df = unified_forecast_res$interval_summary %>%
+    filter(
+      d_true %in% c(
+        0.2,
+        0.6,
+        1,
+        1.4
+      )
+    ),
+  alpha_show = 0.20,
+  T_show = 1000,
+  window_show = "expanding"
+)
+
+```
+
+
+
+```{r}
+p_unified_score_ratio_95_expanding <-
+  combine_four_unified_score_ratio_models_shared_axes(
+    df = unified_score_ratio_95_expanding,
+    file_name = "unified_score_ratio_95_expanding_2x2.pdf",
+    width = 20,
+    height = 15
+  )
+
+p_unified_score_ratio_80_expanding <-
+  combine_four_unified_score_ratio_models_shared_axes(
+    df = unified_score_ratio_80_expanding,
+    file_name = "unified_score_ratio_80_expanding_2x2.pdf",
+    width = 20,
+    height = 15
+  )
+
+```
+
+
+
+
+
+```{r}
+unified_forecast_res$ratio_by_rep_clean %>%
+  filter(
+    window_type == "expanding",
+    p_true == 2,
+    q_true == 0,
+    ar_strength == 0.8,
+    d_true == 0.4,
+    order_selection_method == "adaptive_ic",
+    n == 500,
+    h == 1,
+    RMSE_ratio < 1.5
+  ) %>%
+  pull(RMSE_ratio) %>%
+  mean()
+```

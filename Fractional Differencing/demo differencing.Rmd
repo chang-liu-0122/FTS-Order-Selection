@@ -1,0 +1,799 @@
+---
+title: "demo"
+author: "Chang Liu 510408792"
+date: "2026-03-20"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r, warning = FALSE}
+library(tidyverse)
+library(fda)
+library(ftsa)
+library(refund)
+library(MASS)
+library(fdaACF)
+library(longmemo)
+library(fracdiff)
+library(freqdom.fda)
+library(beepr)
+library(future)
+library(future.apply)
+library(progressr)
+library(wwntests)
+```
+
+
+
+
+
+
+# Illustration with scalar TS
+```{r}
+library(nsarfima)
+
+## Package for FracDiff
+library(FCVAR)
+
+set.seed(100)
+
+original_ts <- arfima.sim(
+10000,
+d = 1.5,
+ar = 0.4,
+ma = 0.3
+)
+
+# original series
+x <- original_ts
+
+# mean
+mu <- mean(x)
+
+# (1 - B)^(d)*(X - u) + (1 - B)^(d)*(u)
+
+# (1 - B)^(d)*(X)
+
+# diffseries (centered)
+y_centered <- diffseries(x, d = 1.5)
+
+# compute T(mu) using SAME operator
+mu_vec <- rep(mu, length(x))
+mu_fd <- FracDiff(matrix(mu_vec, ncol = 1), d = 1.5) %>% as.vector()
+
+# corrected version
+y_corrected <- y_centered + mu_fd
+
+y_true <- FracDiff(matrix(x, ncol = 1), d = 1.5) %>% as.vector()
+
+max(abs(y_corrected - y_true))
+
+
+plot(mu_fd, type = "l", col = "black", lwd = 1, ylim = range(c(-5, 5)),
+     xlab = "Time",
+     ylab = "Value")
+
+lines(y_true, col = "red", lwd = 0.5)
+
+
+
+diff_series_back = diffseries(diff_se, -1.5)
+frac_diff_back = FracDiff(x = as.matrix(diff_se), d = -1.5) %>% as.vector()
+
+
+plot(original_ts, type = "l", col = "black", lwd = 1, ylim = range(c(original_ts, diff_series_back, frac_diff_back)),
+     xlab = "Time",
+     ylab = "Value")
+
+lines(diff_series_back, col = "red", lwd = 0.5)
+
+lines(frac_diff_back, col = "blue", lwd = 0.5)
+
+
+legend("bottomleft",
+       legend = c("Original", "diffseries transform", "FracDiff transform"),
+       col = c("black", "red", "blue"),
+       lwd = c(2,1,1))
+```
+
+
+
+
+# Illustration with FTS
+```{r}
+set.seed(100)
+
+ref <- 101
+v <- seq(from = 0, to = 1, length.out = ref)
+
+# rows = time, cols = grid points
+farma_0.8 <- sim_FARMA(
+  n = 1000,
+  d = 1.5,
+  no_grid = ref,
+  seed_number = 6,
+  process = "FARMA",
+  p = 1,
+  q = 1
+)
+
+mu <- rowMeans(farma_0.8)
+Y_centered <- t(apply(farma_0.8, 1, diffseries, d = 1.5))
+Tn <- ncol(farma_0.8)
+
+mu_mat <- matrix(mu, nrow = length(mu), ncol = Tn)
+
+# apply SAME operator (no centering!)
+mu_fd <- FracDiff(mu_mat, d = 1.5)
+
+Y_corrected <- Y_centered + mu_fd
+
+Y_true <- FracDiff(farma_0.8, d = 1.5)
+
+
+Y_true - Y_corrected
+
+
+
+
+farma_0.8_diff <- FracDiff(
+  x = as.matrix(t(farma_0.8)),
+  d = 1.5
+) %>% t()
+
+
+farma_back <- FracDiff(
+  x = as.matrix(t(farma_0.8_diff)),
+  d = -1.5
+) %>% t()
+
+
+
+idx <- floor(0.4 * ncol(farma_0.8)):floor(0.6 * ncol(farma_0.8))
+
+orig_concat <- as.vector(farma_0.8[,900])
+back_concat <- as.vector(farma_back[,900])
+
+plot(orig_concat, type = "l", col = "black", lwd = 1,
+     xlab = "Concatenated domain",
+     ylab = "Value",
+     ylim = range(c(orig_concat, back_concat)))
+
+lines(back_concat, col = "red", lwd = 0.5)
+
+legend("topright",
+       legend = c("Original", "Reconstructed"),
+       col = c("black", "red"),
+       lwd = c(1, 0.5))
+
+farma_0.8[,idx] - farma_back[,idx] 
+
+
+norm(farma_0.8 - farma_back, type = "F")
+
+hannanrissanen_res(farma_0.8_diff)$theta[,,1] %>% image()
+
+
+
+T_stationary(farma_0.8_diff)
+
+
+
+
+
+
+
+# Step 4: inverse (corrected input)
+farma_back <- FracDiff(farma_fd, d = -1.5)
+
+# Step 5: final reconstruction
+farma_final <- farma_back 
+
+
+
+idx <- floor(0.4 * ncol(farma_0.8)):floor(0.6 * ncol(farma_0.8))
+
+orig_concat <- as.vector(farma_0.8[,900])
+back_concat <- as.vector(farma_final[,900])
+
+plot(orig_concat, type = "l", col = "black", lwd = 1,
+     xlab = "Concatenated domain",
+     ylab = "Value",
+     ylim = range(c(orig_concat, back_concat)))
+
+lines(back_concat, col = "red", lwd = 0.5)
+
+legend("topright",
+       legend = c("Original", "Reconstructed"),
+       col = c("black", "red"),
+       lwd = c(1, 0.5))
+
+farma_0.8[,idx] - farma_back[,idx] 
+
+norm(farma_0.8 - farma_back, type = "F")
+
+```
+
+
+
+```{r}
+# --------------------------------------------------
+# Fractional differencing / integration using FracDiff
+# Each column is a time series
+# --------------------------------------------------
+
+sim <- sim_FARMA(
+    n = 600,
+    d = 1.5,
+    no_grid = 101,
+    seed_number = 1,
+    p = 2,
+    q = 1,
+    ar_strength = 0.9,
+    ma_strength = 0.6,
+    lag_strength = "equal"
+  )
+
+farma_0.8 <- sim$X
+
+
+
+
+farma_0.8_diff <- FracDiff(
+  x = t(farma_0.8),
+  d = 1.5
+) %>% t()
+
+farma_back <- FracDiff(
+  x = t(farma_0.8_diff),
+  d = -1.5
+) %>% t()
+
+T_stationary(farma_back)
+
+
+# --------------------------------------------------
+# Visualisation check
+# --------------------------------------------------
+idx <- floor(0.4 * ncol(farma_0.8)):floor(0.6 * ncol(farma_0.8))
+
+orig_concat <- as.vector(farma_0.8[,900])
+back_concat <- as.vector(farma_back[,900])
+
+plot(orig_concat, type = "l", col = "black", lwd = 1,
+     xlab = "Concatenated domain",
+     ylab = "Value",
+     ylim = range(c(orig_concat, back_concat)))
+
+lines(back_concat, col = "red", lwd = 0.5)
+
+legend("topright",
+       legend = c("Original", "Reconstructed"),
+       col = c("black", "red"),
+       lwd = c(1, 0.5))
+
+farma_0.8[,idx] - farma_back[,idx] 
+
+
+norm(farma_0.8 - farma_back, type = "F")
+```
+
+
+```{r}
+rolling_out <- rolling_fracint_forecast_test(
+  seed = 1,
+  T = 1000,
+  train_ratio = 0.6,
+  valid_ratio = 0.3,
+  d_true = 0.8,
+  p_true = 1,
+  q_true = 1,
+  p_est = 1,
+  q_est = 1,
+  ar_strength = 0.9,
+  ma_strength = 0.9,
+  h_max = 10,
+  Npc = 1,
+  far_pve = 0.95,
+  window_type = "expanding"
+)
+
+
+
+rolling_summary <- rolling_out %>%
+  dplyr::group_by(case, method, h) %>%
+  dplyr::summarise(
+    MAE = mean(MAE, na.rm = TRUE),
+    RMSE = mean(RMSE, na.rm = TRUE),
+    sd_true = mean(sd_true, na.rm = TRUE),
+    mean_abs_true = mean(mean_abs_true, na.rm = TRUE),
+    rms_true = mean(rms_true, na.rm = TRUE),
+    relative_RMSE_sd = mean(relative_RMSE_sd, na.rm = TRUE),
+    relative_RMSE_rms = mean(relative_RMSE_rms, na.rm = TRUE),
+    relative_MAE = mean(relative_MAE, na.rm = TRUE),
+    ME = mean(ME, na.rm = TRUE),
+    n_eval = dplyr::n(),
+    .groups = "drop"
+  )
+
+rolling_summary
+
+
+range(X08)
+range(Y0)
+
+grid_point <- seq(0, 1, length.out = 101)
+
+plot(
+  fts(grid_point, X08),
+  xlab = "Maturity",
+  ylab = "Zero-coupon bond"
+)
+
+plot(
+  fts(grid_point, Y0),
+  xlab = "Maturity",
+  ylab = "Zero-coupon bond"
+)
+```
+
+
+```{r}
+sim <- sim_FARMA(
+    n = 1000,
+    d = 0.8,
+    no_grid = 101,
+    seed_number = 6,
+    p = 2,
+    q = 1,
+    ar_strength = 0.8,
+    ma_strength = 0.8,
+    lag_strength = "equal"
+  )
+
+Y0 <- sim$X
+
+C = get_covariance(Y0, type = "sample", band_const = 1) 
+scores = leading_pc(Y0, C)$scores
+
+d_est_BC2 = estimate_d_BC_LPWN2(
+    Y0,
+    m_const = 0.65,
+    R_noise = 0,
+    B = 100,
+    burn_in = 200
+)$d_BC_LPWN2
+
+Y0_diff = FracDiff(t(Y0), d_est_BC2) %>% t()
+
+order = select_order_far_full(Y0_diff, p_max = 5, q_max = 5, Npc = 1)
+p_est = order$p_hat
+q_est = order$q_hat
+
+conf_out <- rolling_split_conformal_original_ecp(
+  X = Y0,
+  d_hat = d_est_BC2,
+  seed = 1,
+  p_est = p_est,
+  q_est = q_est,
+  h_max = 10,
+  train_ratio = 0.6,
+  valid_ratio = 0.2,
+  alpha_set = c(0.2, 0.05),
+  method = "both",
+  window_type = "expanding",
+  Npc = 1,
+  far_pve = 0.95
+)
+```
+
+
+```{r}
+future::plan(
+  future::multisession,
+  workers = 10
+)
+
+progressr::handlers(
+  "progress"
+)
+
+pipeline_sim <-
+  parallel_repeat_full_forecasting_pipeline(
+    seed_set = 1:20,
+    n = 1000,
+    d_true = 0.8,
+    p_true = 2,
+    q_true = 1,
+    ar_strength = 0.8,
+    ma_strength = 0.5,
+    lag_strength = "equal",
+    no_grid = 101,
+    p_max = 5,
+    q_max = 5,
+    Npc = 1,
+    h_max = 10,
+    train_ratio = 0.6,
+    valid_ratio = 0.2,
+    alpha_set = c(0.2, 0.05),
+    method = "both",
+    window_type = "expanding",
+    far_pve = 0.95,
+    m_const = 0.65,
+    R_noise = 0,
+    B = 100,
+    burn_in = 200
+  )
+```
+```{r}
+rmse_ratio_summary <- pipeline_sim$metric_by_rep %>%
+  dplyr::select(seed, method, h, RMSE) %>%
+  dplyr::distinct() %>%
+  dplyr::group_by(method, h) %>%
+  dplyr::summarise(
+    mean_RMSE = mean(RMSE, na.rm = TRUE),
+    sd_RMSE = sd(RMSE, na.rm = TRUE),
+    n_rep_success =
+      dplyr::n_distinct(seed),
+    .groups = "drop"
+  ) %>%
+  tidyr::pivot_wider(names_from = method,
+                     values_from = c(mean_RMSE, sd_RMSE, n_rep_success)) %>%
+  dplyr::mutate(
+    RMSE_ratio_farma_over_far =
+      mean_RMSE_farma /
+      mean_RMSE_far,
+    
+    RMSE_reduction_percent =
+      100 *
+      (1 -
+         RMSE_ratio_farma_over_far)
+  ) %>%
+  dplyr::arrange(h)
+
+rmse_ratio_summary
+```
+
+
+
+
+
+```{r}
+extract_forecast_interval_metrics <- function(out)
+{
+  actual_detail <- out$actual_detail
+  forecast_detail <- out$forecast_detail
+  interval_detail <- out$interval_detail
+
+  detail_list <- list()
+  counter <- 1
+
+  for(i in seq_len(nrow(interval_detail)))
+  {
+    seed_i <- interval_detail$seed[i]
+    method_i <- interval_detail$method[i]
+    window_i <- interval_detail$window_type[i]
+    alpha_i <- interval_detail$alpha[i]
+    step_i <- interval_detail$step[i]
+    t0_i <- interval_detail$t0[i]
+
+    idx_true <- which(
+      actual_detail$seed == seed_i &
+        actual_detail$step == step_i &
+        actual_detail$t0 == t0_i
+    )
+
+    idx_forecast <- which(
+      forecast_detail$seed == seed_i &
+        forecast_detail$method == method_i &
+        forecast_detail$window_type == window_i &
+        forecast_detail$step == step_i &
+        forecast_detail$t0 == t0_i
+    )
+
+    if(length(idx_true) == 0 || length(idx_forecast) == 0) next
+
+    true_mat <- actual_detail$true[[idx_true[1]]]
+    pred_mat <- forecast_detail$pred[[idx_forecast[1]]]
+    error_mat <- forecast_detail$error[[idx_forecast[1]]]
+
+    lower_mat <- interval_detail$lower[[i]]
+    upper_mat <- interval_detail$upper[[i]]
+
+    h_max <- ncol(true_mat)
+
+    for(h in seq_len(h_max))
+    {
+      true_h <- as.numeric(true_mat[, h])
+      pred_h <- as.numeric(pred_mat[, h])
+      error_h <- as.numeric(error_mat[, h])
+      lower_h <- as.numeric(lower_mat[, h])
+      upper_h <- as.numeric(upper_mat[, h])
+
+      ok_interval <- is.finite(true_h) &
+        is.finite(lower_h) &
+        is.finite(upper_h)
+
+      ok_forecast <- is.finite(true_h) &
+        is.finite(pred_h) &
+        is.finite(error_h)
+
+      true_interval <- true_h[ok_interval]
+      lower_interval <- lower_h[ok_interval]
+      upper_interval <- upper_h[ok_interval]
+
+      error_forecast <- error_h[ok_forecast]
+
+      below <- true_interval < lower_interval
+      above <- true_interval > upper_interval
+
+      score_point <- (upper_interval - lower_interval) +
+        2 / alpha_i * (
+          (lower_interval - true_interval) * below +
+            (true_interval - upper_interval) * above
+        )
+
+      detail_list[[counter]] <- data.frame(
+        seed = seed_i,
+        method = method_i,
+        window_type = window_i,
+        alpha = alpha_i,
+        step = step_i,
+        t0 = t0_i,
+        h = h,
+        cover_count = sum(
+          true_interval >= lower_interval &
+            true_interval <= upper_interval
+        ),
+        miss_count = sum(below) + sum(above),
+        interval_score_sum = sum(score_point),
+        width_sum = sum(upper_interval - lower_interval),
+        SSE = sum(error_forecast^2),
+        SAE = sum(abs(error_forecast)),
+        SE = sum(error_forecast),
+        n_interval = length(true_interval),
+        n_forecast = length(error_forecast)
+      )
+
+      counter <- counter + 1
+    }
+  }
+
+  step_detail <- dplyr::bind_rows(detail_list)
+
+  summary <- step_detail %>%
+  dplyr::group_by(
+    method,
+    window_type,
+    alpha,
+    h
+  ) %>%
+  dplyr::summarise(
+    ECP = sum(cover_count, na.rm = TRUE) /
+      sum(n_interval, na.rm = TRUE),
+
+    interval_score = sum(
+      interval_score_sum,
+      na.rm = TRUE
+    ) / sum(
+      n_interval,
+      na.rm = TRUE
+    ),
+
+    width = sum(
+      width_sum,
+      na.rm = TRUE
+    ) / sum(
+      n_interval,
+      na.rm = TRUE
+    ),
+
+    RMSE = sqrt(
+      sum(SSE, na.rm = TRUE) /
+        sum(n_forecast, na.rm = TRUE)
+    ),
+
+    MAE = sum(
+      SAE,
+      na.rm = TRUE
+    ) / sum(
+      n_forecast,
+      na.rm = TRUE
+    ),
+
+    ME = sum(
+      SE,
+      na.rm = TRUE
+    ) / sum(
+      n_forecast,
+      na.rm = TRUE
+    ),
+
+    n_test = dplyr::n_distinct(step),
+
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+    CPD = abs(ECP - (1 - alpha)),
+    .after = ECP
+  )
+
+  list(
+    step_detail = step_detail,
+    summary = summary
+  )
+}
+```
+
+
+```{r}
+metrics_out <- extract_forecast_interval_metrics(
+  out = conf_out
+)
+
+metrics_out$summary
+```
+
+
+
+```{r}
+diagnose_one_step_farma_far <- function(X,
+                                        d_hat,
+                                        t0,
+                                        h_max = 10,
+                                        p_est = 1,
+                                        q_est = 1,
+                                        Npc = 1,
+                                        far_pve = 0.95)
+{
+  X_history <- X[, 1:t0, drop = FALSE]
+
+  if(d_hat == 0) {
+    Y_history <- X_history
+  } else {
+    Y_history <- frac_difference_history(
+      X_history = X_history,
+      d_hat = d_hat
+    )
+  }
+
+  out <- forecast_original_scale(
+    Y_train = Y_history,
+    d_hat = d_hat,
+    h = h_max,
+    method = "both",
+    p_est = p_est,
+    q_est = q_est,
+    Npc = Npc,
+    far_pve = far_pve,
+    Y_history_for_integration = Y_history,
+    return_fit = FALSE
+  )
+
+  X_true_future <- X[, (t0 + 1):(t0 + h_max), drop = FALSE]
+
+  if(d_hat == 0) {
+    Y_true_future <- X_true_future
+  } else {
+    X_known <- X[, 1:(t0 + h_max), drop = FALSE]
+
+    Y_known <- frac_difference_history(
+      X_history = X_known,
+      d_hat = d_hat
+    )
+
+    Y_true_future <- Y_known[, (t0 + 1):(t0 + h_max), drop = FALSE]
+  }
+
+  make_rows <- function(method_name)
+  {
+    Y_pred <- out[[method_name]]$Y_future
+    X_pred <- out[[method_name]]$X_future
+
+    rows <- lapply(1:h_max, function(h) {
+      err_Y <- Y_pred[, h] - Y_true_future[, h]
+      err_X <- X_pred[, h] - X_true_future[, h]
+
+      data.frame(
+        method = method_name,
+        h = h,
+        RMSE_Y = sqrt(mean(err_Y^2, na.rm = TRUE)),
+        RMSE_X = sqrt(mean(err_X^2, na.rm = TRUE)),
+        amplification = sqrt(mean(err_X^2, na.rm = TRUE)) /
+          sqrt(mean(err_Y^2, na.rm = TRUE))
+      )
+    })
+
+    dplyr::bind_rows(rows)
+  }
+
+  dplyr::bind_rows(
+    make_rows("far"),
+    make_rows("farma")
+  )
+}
+```
+
+
+```{r}
+diag_one <- diagnose_one_step_farma_far(
+  X = Y0,
+  d_hat = 0.8,
+  t0 = 1200,
+  h_max = 10,
+  p_est = 1,
+  q_est = 1,
+  Npc = 1,
+  far_pve = 0.95
+)
+
+diag_one
+```
+
+```{r}
+diagnose_rolling_farma_far <- function(X,
+                                       d_hat,
+                                       t0_set,
+                                       h_max = 10,
+                                       p_est = 1,
+                                       q_est = 1,
+                                       Npc = 1,
+                                       far_pve = 0.95)
+{
+  out_list <- list()
+
+  for(i in seq_along(t0_set))
+  {
+    tmp <- tryCatch(
+      diagnose_one_step_farma_far(
+        X = X,
+        d_hat = d_hat,
+        t0 = t0_set[i],
+        h_max = h_max,
+        p_est = p_est,
+        q_est = q_est,
+        Npc = Npc,
+        far_pve = far_pve
+      ),
+      error = function(e) NULL
+    )
+
+    if(!is.null(tmp))
+    {
+      tmp$t0 <- t0_set[i]
+      out_list[[length(out_list) + 1]] <- tmp
+    }
+  }
+
+  dplyr::bind_rows(out_list)
+}
+```
+
+
+```{r}
+diag_roll <- diagnose_rolling_farma_far(
+  X = Y0,
+  d_hat = 0.8,
+  t0_set = 1200:1250,
+  h_max = 10,
+  p_est = 1,
+  q_est = 1,
+  Npc = 1,
+  far_pve = 0.95
+)
+
+diag_summary <- diag_roll %>%
+  dplyr::group_by(method, h) %>%
+  dplyr::summarise(
+    RMSE_Y = mean(RMSE_Y, na.rm = TRUE),
+    RMSE_X = mean(RMSE_X, na.rm = TRUE),
+    amplification = mean(amplification, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+diag_summary
+```
+
+

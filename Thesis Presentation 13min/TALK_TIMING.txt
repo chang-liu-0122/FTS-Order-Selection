@@ -1,0 +1,45 @@
+Order Selection and Forecasting in Long-Memory Functional Time Series
+13-minute timing guide
+
+The numbered items below are logical Beamer frames. Overlays reveal material within
+the same frame and do not require extra speaking time.
+
+ 1. Title                                                        0:08   0:08
+ 2. Outline                                                      0:12   0:20
+ 3. What a functional time series is                              0:35   0:55
+ 4. FARMA: past curves and past shocks                            0:45   1:40
+ 5. What long memory looks like                                   0:40   2:20
+ 6. FARFIMA(p,d,q): autoregression, memory, moving average        0:45   3:05
+ 7. Literature review and gap                                     0:50   3:55
+ 8. Thesis contribution and workflow                              0:35   4:30
+ 9. Step 1: covariance operator, FPCA, and memory estimate        0:45   5:15
+10. Step 2: functional Box-Jenkins and adaptive HQ                0:45   6:00
+11. Step 3: intuitive Hannan-Rissanen operator estimation         0:35   6:35
+12. Step 4: proposed forecast versus benchmark                    0:35   7:10
+13. Step 5: forecast CV and conformal calibration                 0:40   7:50
+14. Evaluation I: order recovery and point forecasting           0:25   8:15
+15. Evaluation II: interval calibration and sharpness             0:25   8:40
+16. Component 1: covariance operators and memory estimation      0:30   9:10
+17. Component 2a: pure FAR/FMA order selection                    0:30   9:40
+18. Component 2b: mixed FARMA order selection                     0:30  10:10
+19. Component 3a: ideal point forecasting                         0:30  10:40
+20. Component 3b: ideal conformal coverage                        0:25  11:05
+21. Unified 1: order selection after estimating d                 0:35  11:40
+22. Unified 2: end-to-end point forecasting                       0:35  12:15
+23. Conclusion                                                     0:45  13:00
+
+Delivery notes
+--------------
+- Use the outline to set expectations, then move quickly into the functional-data
+  example; the opening remains welcoming to an audience new to the field.
+- On animated frames, click only when changing the spoken idea. Newly revealed
+  terms appear in red and return to the normal palette on the next click.
+- On the FARFIMA notation slide, introduce p, d, and q one at a time, then explain
+  that fractional differencing maps X_t from FARFIMA to stationary FARMA dynamics.
+- On the memory-estimation slide, say the chain aloud: choose an operator, apply
+  FPCA, extract the leading score, then estimate d.
+- Keep the main Hannan-Rissanen explanation intuitive; detailed projected-operator
+  formulas are available in backup.
+- Simulation figures now preserve their native aspect ratios and use the available
+  vertical slide area. State the dominant pattern instead of narrating every panel.
+- Backup begins after the 23rd logical frame and is not included in the 13 minutes.

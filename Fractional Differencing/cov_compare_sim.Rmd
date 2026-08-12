@@ -1,0 +1,522 @@
+---
+title: "Sim_covar_local"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r, warning = FALSE}
+library(future)
+library(future.apply)
+library(longmemo)
+library(progressr)
+library(tidyverse)
+library(matrixStats)
+library(far)
+library(FCVAR)
+```
+
+
+```{r}
+setwd("~/Desktop/FTS Order Selection")
+source("DGP non-stationary FTS/sim_FARMA.R")
+source("Fractional Differencing/local.W.R")
+source("Fractional Differencing/Covariance Matrix.R")
+```
+
+# Comparison across covariance matrix with local whittling and DFA estimator (both long memory and non-stationary)
+
+## Pure FAR
+
+### Simulation
+
+```{r, warning=FALSE}
+# Simulation grid
+T_vals  <- c(500, 1000, 2000)
+ar_vals <- c(0.2, 0.5, 0.8)
+d_vals  <- c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1, 1.2, 1.4)
+
+grid <- expand.grid(
+  T = T_vals,
+  ar_strength = ar_vals,
+  d = d_vals
+)
+
+plan(multisession, workers = 10)
+
+handlers("progress")
+
+covariance_matrix_comparison_FAR <- parallel_sim_d_est_FAR(n_rep = 100,
+                             cov_types = c("sample", "lrc_RS", "lrc_LRS"))
+
+saveRDS(covariance_matrix_comparison_FAR, "covariance_matrix_comparison_FAR.rds")
+```
+
+- Data processing
+
+```{r}
+result_d_FAR_comparison = readRDS("covariance_matrix_comparison_FAR.rds")
+
+df_raw_line_FAR <- result_d_FAR_comparison %>%
+  pivot_longer(
+    cols = c(
+      sample_whittle,
+      lrc_RS_whittle,
+      lrc_LRS_whittle,
+      sample_peng,
+      lrc_RS_peng,
+      lrc_LRS_peng
+    ),
+    names_to = "variable",
+    values_to = "d_est"
+  ) %>%
+  mutate(
+    estimator = case_when(
+      str_detect(variable, "whittle") ~ "Whittle",
+      str_detect(variable, "peng") ~ "DFA"
+    ),
+    operator = case_when(
+      str_detect(variable, "^sample") ~ "Sample",
+      str_detect(variable, "^lrc_RS") ~ "LRC-RS",
+      str_detect(variable, "^lrc_LRS") ~ "LRC-LRS"
+    )
+  ) %>%
+  group_by(T, ar_strength, d_true, estimator, operator) %>%
+  summarise(mean_d_est = mean(d_est, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    estimator = factor(estimator, levels = c("Whittle", "DFA")),
+    operator = factor(operator, levels = c("Sample", "LRC-RS", "LRC-LRS")),
+    ar_label = factor(paste0("psi==", ar_strength), levels = paste0("psi==", sort(
+      unique(ar_strength)
+    ))),
+    T_label = factor(paste0("T==", T), levels = paste0("T==", sort(unique(
+      T
+    ))))
+  )
+```
+
+### Analysis
+
+- Comparison of covariance matrix
+
+
+```{r}
+plot_cov_compare_FAR <- function(df, estimator_keep, title = NULL) {
+  
+  df_sub <- df %>%
+    filter(estimator == estimator_keep) %>%
+    mutate(
+      d_label = if ("d_label" %in% names(.)) {
+        d_label
+      } else {
+        paste0("d==", d_true)
+      }
+    )
+  
+  T_levels <- df_sub %>%
+    distinct(T_label) %>%
+    pull(T_label)
+  
+  d_levels <- df_sub %>%
+    distinct(d_true, d_label) %>%
+    arrange(d_true) %>%
+    pull(d_label)
+  
+  ar_levels <- df_sub %>%
+    distinct(ar_label) %>%
+    pull(ar_label)
+  
+  ref_df <- tidyr::expand_grid(
+    T_label = T_levels,
+    ar_label = ar_levels,
+    d_label = d_levels
+  ) %>%
+    left_join(
+      df_sub %>%
+        distinct(d_true, d_label),
+      by = "d_label"
+    ) %>%
+    mutate(
+      mean_d_est = d_true,
+      operator = "True d"
+    )
+  
+  df_plot <- bind_rows(
+    df_sub %>%
+      select(T_label, ar_label, d_true, d_label, mean_d_est, operator),
+    ref_df %>%
+      select(T_label, ar_label, d_true, d_label, mean_d_est, operator)
+  ) %>%
+    mutate(
+      T_label = factor(T_label, levels = T_levels),
+      d_label = factor(d_label, levels = d_levels),
+      operator = factor(
+        operator,
+        levels = c("True d", "Sample", "LRC-RS", "LRC-LRS")
+      )
+    )
+  
+  ggplot(
+    df_plot,
+    aes(
+      x = T_label,
+      y = mean_d_est,
+      group = operator,
+      colour = operator,
+      linetype = operator,
+      shape = operator
+    )
+  ) +
+    geom_line(linewidth = 0.3, alpha = 0.8) +
+    geom_point(size = 1.6) +
+    facet_grid(d_label ~ ar_label, labeller = label_parsed) +
+    scale_colour_manual(
+      values = c(
+        "True d" = "red",
+        "Sample" = "black",
+        "LRC-RS" = "black",
+        "LRC-LRS" = "black"
+      )
+    ) +
+    scale_linetype_manual(
+      values = c(
+        "True d" = "dashed",
+        "Sample" = "solid",
+        "LRC-RS" = "dashed",
+        "LRC-LRS" = "dotted"
+      )
+    ) +
+    scale_shape_manual(
+      values = c(
+        "True d" = 4,
+        "Sample" = 16,
+        "LRC-RS" = 17,
+        "LRC-LRS" = 15
+      )
+    ) +
+    labs(
+      title = title,
+      x = "Sample size T",
+      y = expression("Mean estimated memory parameter " * hat(d)),
+      colour = "Covariance operator",
+      linetype = "Covariance operator",
+      shape = "Covariance operator"
+    ) +
+    theme_classic(base_size = 18) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "top"
+    )
+}
+```
+
+
+```{r}
+p_raw_whittle_FAR <- plot_cov_compare_FAR(df_raw_line_FAR, estimator_keep = "Whittle")
+
+p_raw_peng_FAR <- plot_cov_compare_FAR(df_raw_line_FAR, estimator_keep = "DFA")
+
+p_raw_whittle_FAR
+p_raw_peng_FAR
+
+
+ggsave(
+  "Sim Plots/Cov_LW_FAR.pdf",
+  p_raw_whittle_FAR,
+  width = 10, height = 6, dpi = 1200
+)
+
+ggsave(
+  "Sim Plots/Cov_DFA_FAR.pdf",
+  p_raw_peng_FAR,
+  width = 10, height = 6, dpi = 1200
+)
+```
+
+
+
+
+## FARMA
+
+### Simulation
+
+```{r, warning=FALSE}
+# Simulation grid
+T_vals  <- c(500, 1000, 2000)
+ar_vals <- c(0.2, 0.5, 0.8)
+ma_vals <- c(0.2, 0.5, 0.8)
+d_vals  <- c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1, 1.2, 1.4)
+
+grid <- expand.grid(
+  T = T_vals,
+  strength_ar = ar_vals,
+  strength_ma = ma_vals,
+  d = d_vals
+)
+
+plan(multisession)
+
+handlers("progress")
+
+covariance_matrix_comparison_FARMA <- parallel_sim_d_est_FARMA(n_rep = 100,
+                             cov_types = c("sample", "lrc_RS", "lrc_LRS"))
+
+saveRDS(covariance_matrix_comparison_FARMA, "covariance_matrix_comparison_FARMA.rds")
+```
+
+
+- Data Processing
+
+```{r}
+covariance_matrix_comparison_FARMA = readRDS("covariance_matrix_comparison_FARMA.rds")
+
+df_raw_line_FARMA <- covariance_matrix_comparison_FARMA %>%
+  pivot_longer(
+    cols = c(
+      sample_whittle,
+      lrc_RS_whittle,
+      lrc_LRS_whittle,
+      sample_peng,
+      lrc_RS_peng,
+      lrc_LRS_peng
+    ),
+    names_to = "variable",
+    values_to = "d_est"
+  ) %>%
+  mutate(
+    estimator = case_when(
+      grepl("whittle", variable) ~ "Whittle",
+      grepl("peng", variable) ~ "DFA"
+    ),
+    operator = case_when(
+      grepl("^sample", variable) ~ "Sample",
+      grepl("^lrc_RS", variable) ~ "LRC-RS",
+      grepl("^lrc_LRS", variable) ~ "LRC-LRS"
+    )
+  ) %>%
+  group_by(T, d_true, strength_ar, strength_ma, estimator, operator) %>%
+  summarise(mean_d_est = mean(d_est, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    estimator = factor(estimator, levels = c("Whittle", "DFA")),
+    operator = factor(operator, levels = c("Sample", "LRC-RS", "LRC-LRS")),
+    ar_label = factor(paste0("psi==", strength_ar), levels = paste0("psi==", sort(
+      unique(strength_ar)
+    ))),
+    ma_label = factor(paste0("nu==", strength_ma), levels = paste0("nu==", sort(
+      unique(strength_ma)
+    ))),
+    T_label = factor(paste0("T==", T), levels = paste0("T==", sort(unique(
+      T
+    ))))
+  )
+```
+
+
+
+
+- Analysis
+
+```{r}
+plot_cov_compare_FARMA <- function(df, estimator_keep, ma_keep, title = NULL) {
+  
+  df_sub <- df %>%
+    filter(
+      estimator == estimator_keep,
+      strength_ma == ma_keep
+    )
+  
+  if (!"d_label" %in% names(df_sub)) {
+    df_sub <- df_sub %>%
+      mutate(d_label = paste0("d==", d_true))
+  }
+  
+  T_levels <- df_sub %>%
+    distinct(T_label) %>%
+    pull(T_label)
+  
+  d_levels <- df_sub %>%
+    distinct(d_true, d_label) %>%
+    arrange(d_true) %>%
+    pull(d_label)
+  
+  ar_levels <- df_sub %>%
+    distinct(ar_label) %>%
+    pull(ar_label)
+  
+  ref_df <- tidyr::expand_grid(
+    T_label = T_levels,
+    ar_label = ar_levels,
+    d_label = d_levels
+  ) %>%
+    left_join(
+      df_sub %>%
+        distinct(d_true, d_label),
+      by = "d_label"
+    ) %>%
+    mutate(
+      mean_d_est = d_true,
+      operator = "True d"
+    )
+  
+  df_plot <- bind_rows(
+    df_sub %>%
+      select(
+        T_label,
+        ar_label,
+        d_true,
+        d_label,
+        mean_d_est,
+        operator
+      ),
+    ref_df %>%
+      select(
+        T_label,
+        ar_label,
+        d_true,
+        d_label,
+        mean_d_est,
+        operator
+      )
+  ) %>%
+    mutate(
+      T_label = factor(T_label, levels = T_levels),
+      d_label = factor(d_label, levels = d_levels),
+      operator = factor(
+        operator,
+        levels = c("True d", "Sample", "LRC-RS", "LRC-LRS")
+      )
+    )
+  
+  ggplot(
+    df_plot,
+    aes(
+      x = T_label,
+      y = mean_d_est,
+      group = operator,
+      colour = operator,
+      linetype = operator,
+      shape = operator
+    )
+  ) +
+    geom_line(linewidth = 0.3, alpha = 0.8) +
+    geom_point(size = 1.6) +
+    facet_grid(d_label ~ ar_label, labeller = label_parsed) +
+    scale_colour_manual(
+      values = c(
+        "True d" = "red",
+        "Sample" = "black",
+        "LRC-RS" = "black",
+        "LRC-LRS" = "black"
+      )
+    ) +
+    scale_linetype_manual(
+      values = c(
+        "True d" = "dashed",
+        "Sample" = "solid",
+        "LRC-RS" = "dashed",
+        "LRC-LRS" = "dotted"
+      )
+    ) +
+    scale_shape_manual(
+      values = c(
+        "True d" = 4,
+        "Sample" = 16,
+        "LRC-RS" = 17,
+        "LRC-LRS" = 15
+      )
+    ) +
+    labs(
+      title = title,
+      x = "Sample size T",
+      y = expression("Mean estimated memory parameter " * hat(d)),
+      colour = "Covariance operator",
+      linetype = "Covariance operator",
+      shape = "Covariance operator"
+    ) +
+    theme_classic(base_size = 18) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "top"
+    )
+}
+```
+
+
+
+```{r}
+p_cov_whittle_FARMA_02 <- plot_cov_compare_FARMA(
+  df_raw_line_FARMA,
+  estimator_keep = "Whittle",
+  ma_keep = 0.2
+)
+
+p_cov_whittle_FARMA_05 <- plot_cov_compare_FARMA(
+  df_raw_line_FARMA,
+  estimator_keep = "Whittle",
+  ma_keep = 0.5
+)
+
+p_cov_whittle_FARMA_08 <- plot_cov_compare_FARMA(
+  df_raw_line_FARMA,
+  estimator_keep = "Whittle",
+  ma_keep = 0.8
+)
+
+p_cov_peng_FARMA_02 <- plot_cov_compare_FARMA(
+  df_raw_line_FARMA,
+  estimator_keep = "DFA",
+  ma_keep = 0.2
+)
+
+p_cov_peng_FARMA_05 <- plot_cov_compare_FARMA(
+  df_raw_line_FARMA,
+  estimator_keep = "DFA",
+  ma_keep = 0.5
+)
+
+p_cov_peng_FARMA_08 <- plot_cov_compare_FARMA(
+  df_raw_line_FARMA,
+  estimator_keep = "DFA",
+  ma_keep = 0.8
+)
+
+
+ggsave(
+  "Sim Plots/Cov_LW_FARMA_MA_0.2.pdf",
+  p_cov_whittle_FARMA_02,
+  width = 10, height = 6, dpi = 1200
+)
+
+ggsave(
+  "Sim Plots/Cov_LW_FARMA_MA_0.5.pdf",
+  p_cov_whittle_FARMA_05,
+  width = 10, height = 6, dpi = 1200
+)
+
+ggsave(
+  "Sim Plots/Cov_LW_FARMA_MA_0.8.pdf",
+  p_cov_whittle_FARMA_08,
+  width = 10, height = 6, dpi = 1200
+)
+
+
+ggsave(
+  "Sim Plots/Cov_DFA_FARMA_MA_0.2.pdf",
+  p_cov_peng_FARMA_02,
+  width = 10, height = 6, dpi = 1200
+)
+
+ggsave(
+  "Sim Plots/Cov_DFA_FARMA_MA_0.5.pdf",
+  p_cov_peng_FARMA_05,
+  width = 10, height = 6, dpi = 1200
+)
+
+ggsave(
+  "Sim Plots/Cov_DFA_FARMA_MA_0.8.pdf",
+  p_cov_peng_FARMA_08,
+  width = 10, height = 6, dpi = 1200
+)
+```
+

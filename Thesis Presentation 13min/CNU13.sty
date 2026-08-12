@@ -1,0 +1,94 @@
+\mode<presentation>
+
+% Compact CNU theme adapted from the user's CoC and conference decks.
+\useoutertheme[footline=authorinstitutetitle,subsection=false]{smoothbars}
+\useinnertheme{circles}
+
+\makeatletter
+\newcommand{\frameofframes}{/}
+\newcommand{\setframeofframes}[1]{\renewcommand{\frameofframes}{#1}}
+
+\setbeamertemplate{title page}{
+  \vbox{
+    \vskip1.2em
+    \begin{beamercolorbox}[sep=9pt,center,rounded=true,shadow=true]{title}
+      \usebeamerfont{title}\inserttitle\par
+      \ifx\insertsubtitle\@empty\else
+        \vskip0.5em
+        {\usebeamerfont{subtitle}\usebeamercolor[fg]{subtitle}\insertsubtitle\par}
+      \fi
+    \end{beamercolorbox}
+    \vskip0.55em
+    \begin{beamercolorbox}[sep=7pt,center]{author}
+      \usebeamerfont{author}\insertauthor
+    \end{beamercolorbox}
+    \vskip0.15em
+    \begin{beamercolorbox}[sep=7pt,center]{institute}
+      \usebeamerfont{institute}\insertinstitute
+      \vskip0.4em
+      \begin{beamercolorbox}[sep=6pt,center]{date}
+        \usebeamerfont{date}\insertdate
+      \end{beamercolorbox}
+    \end{beamercolorbox}
+  }
+}
+
+\setbeamertemplate{footline}{
+  \begin{beamercolorbox}[colsep=1.5pt]{upper separation line foot}\end{beamercolorbox}
+  \begin{beamercolorbox}[ht=2.5ex,dp=1.125ex,leftskip=.3cm,rightskip=.3cm plus1fil]{author in head/foot}
+    \leavevmode{\usebeamerfont{author in head/foot}\insertshortauthor}
+    \hfill
+    {\usebeamerfont{institute in head/foot}\usebeamercolor[fg]{institute in head/foot}\insertshortinstitute}
+  \end{beamercolorbox}
+  \begin{beamercolorbox}[ht=2.5ex,dp=1.125ex,leftskip=.3cm,rightskip=.3cm plus1fil]{title in head/foot}
+    {\usebeamerfont{title in head/foot}\insertshorttitle}
+    \hfill
+    {\usebeamerfont{frame number}\usebeamercolor[fg]{frame number}\insertframenumber~\frameofframes~\inserttotalframenumber}
+  \end{beamercolorbox}
+  \begin{beamercolorbox}[colsep=1.5pt]{lower separation line foot}\end{beamercolorbox}
+}
+\makeatother
+
+\definecolor{CNU}{HTML}{3434B4}
+\definecolor{CNUDeep}{HTML}{202078}
+\definecolor{CNUWash}{HTML}{E9E9F6}
+\definecolor{RevealRed}{HTML}{D62728}
+\definecolor{GoodGreen}{HTML}{178F62}
+\definecolor{WarmOrange}{HTML}{E56B00}
+\definecolor{SoftGray}{HTML}{F4F5F8}
+\definecolor{MidGray}{HTML}{5C6370}
+
+\setbeamercolor{footline}{bg=CNU}
+\setbeamercolor{frametitle}{bg=CNU,fg=white}
+\setbeamercolor{title}{bg=CNU,fg=white}
+\setbeamercolor{subtitle}{fg=white}
+\setbeamerfont{frametitle}{size=\large}
+\setbeamerfont{title}{size=\Large,series=\bfseries}
+\setbeamerfont{subtitle}{size=\normalsize}
+\setbeamerfont{author}{size=\normalsize}
+
+\setbeamercolor{palette primary}{use=structure,fg=white,bg=structure.fg}
+\setbeamercolor{palette secondary}{use=structure,fg=white,bg=structure.fg!75!black}
+\setbeamercolor{palette tertiary}{use=structure,fg=white,bg=structure.fg!50!black}
+\setbeamercolor{palette quaternary}{fg=white,bg=structure.fg!50!black}
+\setbeamercolor{titlelike}{parent=palette primary}
+\setbeamercolor{block title}{bg=CNU,fg=white}
+\setbeamercolor{block body}{bg=CNUWash,fg=black}
+\setbeamercolor{block title alerted}{bg=RevealRed,fg=white}
+\setbeamercolor{block body alerted}{bg=RevealRed!8,fg=black}
+\setbeamercolor{block title example}{bg=GoodGreen,fg=white}
+\setbeamercolor{block body example}{bg=GoodGreen!8,fg=black}
+\setbeamercolor{item projected}{fg=white}
+\setbeamercolor{structure}{fg=CNU}
+\setbeamercolor{alerted text}{fg=RevealRed}
+\setbeamercolor{section in head/foot}{fg=white,bg=CNUDeep}
+\setbeamercolor{section in head/foot shaded}{fg=white!55,bg=CNUDeep}
+
+\setbeamertemplate{blocks}[rounded][shadow=true]
+\setbeamertemplate{theorems}[numbered]
+\setbeamertemplate{caption}[numbered]
+\setbeamertemplate{bibliography item}[text]
+\setbeamertemplate{navigation symbols}{}
+
+% Deliberately no automatic outline frames: the 13-minute talk cannot afford them.
+\mode<all>

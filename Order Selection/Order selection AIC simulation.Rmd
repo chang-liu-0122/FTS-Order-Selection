@@ -1,0 +1,1220 @@
+---
+title: "Order selection AIC"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+# Package importation
+
+```{r, warning = F}
+library(future.apply)
+library(progressr)
+library(fda)
+library(ftsa)
+library(refund)
+library(MASS)
+library(fdaACF)
+library(longmemo)
+library(fracdiff)
+library(freqdom.fda)
+library(beepr)
+library(future)
+library(future.apply)
+library(progressr)
+library(wwntests)
+library(tidyverse)
+library(tidyr)
+library(FCVAR)
+```
+
+
+```{r}
+setwd("~/Desktop/FTS Order Selection")
+
+source("DGP non-stationary FTS/sim_FARMA.R")
+source("Operator Estimation/Kuenzer FARMA Estimation.R")
+source("Order Selection/Marginal BIC.R")
+source("Order Selection/WN test order selection.R")
+source("Order Selection/Sim order selection.R")
+source("Fractional Differencing/Covariance Matrix.R")
+
+```
+
+
+
+# Adaptive white noise IC 
+
+## Simulation Setting
+
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+grid <- expand.grid(
+  T = c(1000, 2000, 5000),
+  p = c(0, 1, 2),
+  q = c(0, 1, 2),
+  ar_strength = c(0.3, 0.6, 0.9),
+  ma_strength = c(0.3, 0.6, 0.9)
+) %>%
+  dplyr::filter(!(p == 0 & q == 0)) %>%
+  dplyr::mutate(
+    ar_strength = ifelse(p == 0, 0, ar_strength),
+    ma_strength = ifelse(q == 0, 0, ma_strength)
+  ) %>%
+  dplyr::distinct()
+
+# grid <- expand.grid(
+#   T = c(5000),
+#   ar_strength = c(0.6),
+#   ma_strength = c(0.5),
+#   p = c(2),
+#   q = c(1)
+# )
+
+plan(multisession, workers = 10)
+handlers("progress")
+
+res_compare <- parallel_sim_order_selection_FARMA_compare(
+  n_rep = 100,
+  grid = grid,
+  p_max = 5,
+  q_max = 5,
+  Npc = 1,
+  lag_test = NULL,
+  alpha = 0.05
+)
+
+res_compare$simple_result %>% filter(method == "Adaptive_IC") %>% pull(correct) %>% mean()
+```
+
+
+
+## Analysis
+```{r}
+order_select_comapre = read_rds("sim_order_compare.rds")
+```
+
+
+### Helper to get auto-search
+```{r}
+auto_select_one_from_IC_detail <- function(df,
+                                           sample_size,
+                                           p_max = 5,
+                                           q_max = 5) {
+  if (!"converged" %in% names(df)) {
+    df$converged <- TRUE
+  }
+  
+  df <- df %>%
+    filter(!is.na(p), !is.na(q), is.finite(F_T), converged == TRUE)
+  
+  if (nrow(df) == 0) {
+    return(
+      tibble(
+        p_auto = NA_integer_,
+        q_auto = NA_integer_,
+        delta_hat_auto = NA_real_,
+        IC_auto = NA_real_,
+        auto_path = NA_character_
+      )
+    )
+  }
+  
+  big_fit <- df %>%
+    filter(p == p_max, q == q_max) %>%
+    slice(1)
+  
+  if (nrow(big_fit) == 0 || !is.finite(big_fit$F_T)) {
+    return(
+      tibble(
+        p_auto = NA_integer_,
+        q_auto = NA_integer_,
+        delta_hat_auto = NA_real_,
+        IC_auto = NA_real_,
+        auto_path = NA_character_
+      )
+    )
+  }
+  
+  delta_hat <- big_fit$F_T[1]
+  
+  df_auto <- df %>%
+    mutate(
+      delta_hat_auto = delta_hat,
+      penalty_auto = log(log(sample_size)) * delta_hat_auto * (p + q),
+      IC_auto_candidate = F_T + penalty_auto
+    )
+  
+  starts <- tibble(p = c(2, 1, 0), q = c(2, 0, 1)) %>%
+    filter(p <= p_max, q <= q_max, !(p == 0 & q == 0))
+  
+  start_results <- df_auto %>%
+    inner_join(starts, by = c("p", "q")) %>%
+    filter(is.finite(IC_auto_candidate))
+  
+  if (nrow(start_results) == 0) {
+    return(
+      tibble(
+        p_auto = NA_integer_,
+        q_auto = NA_integer_,
+        delta_hat_auto = delta_hat,
+        IC_auto = NA_real_,
+        auto_path = NA_character_
+      )
+    )
+  }
+  
+  current <- start_results %>%
+    slice_min(IC_auto_candidate, n = 1, with_ties = FALSE)
+  
+  current_p <- as.integer(current$p)
+  current_q <- as.integer(current$q)
+  current_IC <- as.numeric(current$IC_auto_candidate)
+  
+  path <- paste0("(", current_p, ",", current_q, ")")
+  
+  improved <- TRUE
+  
+  while (improved) {
+    improved <- FALSE
+    
+    neighbours <- expand.grid(dp = c(-1, 0, 1), dq = c(-1, 0, 1)) %>%
+      as_tibble() %>%
+      filter(!(dp == 0 & dq == 0)) %>%
+      mutate(p = current_p + dp, q = current_q + dq) %>%
+      filter(p >= 0, q >= 0, p <= p_max, q <= q_max, !(p == 0 &
+                                                         q == 0)) %>%
+      select(p, q) %>%
+      distinct()
+    
+    neighbour_results <- df_auto %>%
+      inner_join(neighbours, by = c("p", "q")) %>%
+      filter(is.finite(IC_auto_candidate))
+    
+    if (nrow(neighbour_results) > 0) {
+      best_neighbour <- neighbour_results %>%
+        slice_min(IC_auto_candidate, n = 1, with_ties = FALSE)
+      
+      if (best_neighbour$IC_auto_candidate < current_IC) {
+        current_p <- as.integer(best_neighbour$p)
+        current_q <- as.integer(best_neighbour$q)
+        current_IC <- as.numeric(best_neighbour$IC_auto_candidate)
+        
+        path <- paste0(path, " -> (", current_p, ",", current_q, ")")
+        
+        improved <- TRUE
+      }
+    }
+  }
+  
+  tibble(
+    p_auto = current_p,
+    q_auto = current_q,
+    delta_hat_auto = delta_hat,
+    IC_auto = current_IC,
+    auto_path = path
+  )
+}
+
+make_auto_result_from_IC_detail <- function(IC_detail,
+                                            p_max = 5,
+                                            q_max = 5) {
+  candidate_cols <- c("p", "q", "F_T", "IC", "penalty", "converged", "delta_hat")
+  
+  grid_result_cols <- c("p_hat", "q_hat", "correct_selected")
+  
+  group_cols <- setdiff(names(IC_detail), c(candidate_cols, grid_result_cols))
+  
+  IC_detail %>%
+    group_by(across(all_of(group_cols))) %>%
+    group_modify( ~ {
+      df_i <- .x
+      key_i <- .y
+      
+      sample_size <- if ("n" %in% names(key_i)) {
+        key_i$n[[1]]
+      } else if ("T" %in% names(key_i)) {
+        key_i$T[[1]]
+      } else {
+        stop("No sample size column found in group key.")
+      }
+      
+      grid_best <- df_i %>%
+        filter(is.finite(IC)) %>%
+        slice_min(IC, n = 1, with_ties = FALSE) %>%
+        transmute(p_grid = as.integer(p),
+                  q_grid = as.integer(q),
+                  IC_grid = as.numeric(IC))
+      
+      if (nrow(grid_best) == 0) {
+        grid_best <- tibble(p_grid = NA_integer_,
+                            q_grid = NA_integer_,
+                            IC_grid = NA_real_)
+      }
+      
+      auto_best <- auto_select_one_from_IC_detail(
+        df = df_i,
+        sample_size = sample_size,
+        p_max = p_max,
+        q_max = q_max
+      )
+      
+      bind_cols(grid_best, auto_best)
+    }) %>%
+    ungroup() %>%
+    mutate(same_grid_auto = p_grid == p_auto & q_grid == q_auto) %>%
+    mutate(grid_correct = if ("p_true" %in% names(.) &&
+                              "q_true" %in% names(.)) {
+      p_grid == p_true & q_grid == q_true
+    } else {
+      NA
+    },
+    auto_correct = if ("p_true" %in% names(.) &&
+                       "q_true" %in% names(.)) {
+      p_auto == p_true & q_auto == q_true
+    } else {
+      NA
+    })
+}
+
+make_order_accuracy_summary <- function(df)
+{
+  library(dplyr)
+
+  correct_name <- if ("correct_selected" %in% names(df)) {
+    "correct_selected"
+  } else if ("correct" %in% names(df)) {
+    "correct"
+  } else {
+    stop("Need `correct_selected` or `correct` column.")
+  }
+
+  T_name <- if ("T" %in% names(df)) {
+    "T"
+  } else if ("n" %in% names(df)) {
+    "n"
+  } else {
+    stop("Need `T` or `n` column.")
+  }
+
+  df %>%
+    mutate(
+      T_value = as.numeric(.data[[T_name]]),
+      correct_use = as.numeric(.data[[correct_name]]),
+
+      p_true = as.integer(p_true),
+      q_true = as.integer(q_true),
+
+      ar_strength = as.numeric(ar_strength),
+      ma_strength = as.numeric(ma_strength),
+
+      model = paste0("(", p_true, ",", q_true, ")"),
+      model_label = paste0("FARMA(", p_true, ",", q_true, ")"),
+
+      model_class = case_when(
+        p_true > 0 & q_true == 0 ~ "Pure FAR",
+        p_true == 0 & q_true > 0 ~ "Pure FMA",
+        p_true > 0 & q_true > 0 ~ "FARMA",
+        TRUE ~ "Other"
+      ),
+
+      method = case_when(
+        as.character(method) %in%
+          c("WN_Test", "WN test", "Box Jenkins") ~
+          "Box Jenkins",
+
+        as.character(method) %in%
+          c("Adaptive_IC", "Adaptive IC", "Functional IC") ~
+          "Functional IC",
+
+        as.character(method) %in%
+          c(
+            "Adaptive_IC_auto",
+            "Adaptive IC auto",
+            "Auto Adaptive IC",
+            "Auto Functional IC"
+          ) ~
+          "Auto Functional IC",
+
+        TRUE ~ as.character(method)
+      )
+    ) %>%
+
+    group_by(
+      T_value,
+      ar_strength,
+      ma_strength,
+      p_true,
+      q_true,
+      model,
+      model_label,
+      model_class,
+      method
+    ) %>%
+
+    summarise(
+      accuracy = mean(correct_use, na.rm = TRUE),
+      n_runs = n(),
+      .groups = "drop"
+    ) %>%
+
+    mutate(
+      T_factor = factor(
+        T_value,
+        levels = sort(unique(T_value))
+      ),
+
+      method = factor(
+        method,
+        levels = c(
+          "Box Jenkins",
+          "Functional IC",
+          "Auto Functional IC"
+        )
+      ),
+
+      model_class = factor(
+        model_class,
+        levels = c(
+          "Pure FAR",
+          "Pure FMA",
+          "FARMA",
+          "Other"
+        )
+      ),
+
+      model = factor(
+        model,
+        levels = c(
+          "(1,0)", "(2,0)",
+          "(0,1)", "(0,2)",
+          "(1,1)", "(2,1)",
+          "(1,2)", "(2,2)"
+        )
+      ),
+
+      psi_label = factor(
+        paste0("psi==", ar_strength),
+        levels = paste0(
+          "psi==",
+          sort(unique(ar_strength))
+        )
+      ),
+
+      nu_label = factor(
+        paste0("nu==", ma_strength),
+        levels = paste0(
+          "nu==",
+          sort(unique(ma_strength))
+        )
+      ),
+
+      psi_plain = factor(
+        ar_strength,
+        levels = sort(unique(ar_strength))
+      ),
+
+      nu_plain = factor(
+        ma_strength,
+        levels = sort(unique(ma_strength))
+      )
+    )
+}
+
+
+auto_IC_result <- make_auto_result_from_IC_detail(
+  IC_detail = order_select_comapre$IC_detail,
+  p_max = 5,
+  q_max = 5
+)
+
+simple_result <- order_select_comapre$simple_result
+
+simple_long <- simple_result %>%
+  mutate(
+    method = as.character(method),
+    p_selected = as.integer(p_hat),
+    q_selected = as.integer(q_hat),
+    selected_order = paste0("(", p_selected, ",", q_selected, ")"),
+    true_order = paste0("(", p_true, ",", q_true, ")"),
+    correct = as.logical(correct)
+  ) %>%
+  select(
+    any_of(c(
+      "n", "T",
+      "ar_strength", "ma_strength",
+      "p_true", "q_true",
+      "seed",
+      "method",
+      "p_selected", "q_selected",
+      "selected_order", "true_order",
+      "correct",
+      "delta_hat", "p_value", "lag_test", "error_message"
+    ))
+  )
+
+auto_long <- auto_IC_result %>%
+  mutate(
+    method = "Adaptive_IC_auto",
+    p_selected = as.integer(p_auto),
+    q_selected = as.integer(q_auto),
+    selected_order = paste0("(", p_selected, ",", q_selected, ")"),
+    true_order = paste0("(", p_true, ",", q_true, ")"),
+    correct = p_selected == p_true & q_selected == q_true,
+    delta_hat = delta_hat_auto,
+    p_value = NA_real_,
+    lag_test = NA_real_,
+    error_message = NA_character_
+  ) %>%
+  select(
+    any_of(c(
+      "n", "T",
+      "ar_strength", "ma_strength",
+      "p_true", "q_true",
+      "seed",
+      "method",
+      "p_selected", "q_selected",
+      "selected_order", "true_order",
+      "correct",
+      "delta_hat", "p_value", "lag_test", "error_message",
+      "IC_auto", "auto_path",
+      "p_grid", "q_grid", "IC_grid",
+      "same_grid_auto"
+    ))
+  )
+
+order_analysis_long <- bind_rows(
+  simple_long,
+  auto_long
+) %>%
+  mutate(
+    n = if ("n" %in% names(.)) n else T,
+    method = as.character(method),
+    true_order = factor(true_order),
+    selected_order = factor(selected_order)
+  )
+
+
+order_acc_summary <- make_order_accuracy_summary(order_analysis_long)
+
+method_cols <- c(
+  "Box Jenkins" = "#4DAF7C",
+  "Functional IC" = "#D95F02",
+  "Auto Functional IC" = "#7570B3"
+)
+
+method_ltys <- c(
+  "Box Jenkins" = "solid",
+  "Functional IC" = "dashed",
+  "Auto Functional IC" = "dotted"
+)
+
+method_shapes <- c(
+  "Box Jenkins" = 16,
+  "Functional IC" = 17,
+  "Auto Functional IC" = 15
+)
+```
+
+
+### Plotting functions
+```{r}
+plot_order_accuracy_one_model <- function(df, model_show, title = NULL, show_legend = FALSE)
+{
+  df_sub <- df %>%
+    filter(model == model_show)
+
+  model_clean <- gsub("[() ]", "", model_show)
+  pq <- strsplit(model_clean, ",")[[1]]
+  p0 <- as.integer(pq[1])
+  q0 <- as.integer(pq[2])
+
+  g <- ggplot(
+    df_sub,
+    aes(
+      x = T_factor,
+      y = accuracy,
+      group = method,
+      colour = method,
+      linetype = method,
+      shape = method
+    )
+  ) +
+    geom_line(linewidth = 0.65) +
+    geom_point(size = 2.0) +
+    scale_colour_manual(values = method_cols) +
+    scale_linetype_manual(values = method_ltys) +
+    scale_shape_manual(values = method_shapes) +
+    scale_y_continuous(
+      limits = c(0, 1.02),
+      breaks = seq(0, 1, by = 0.2),
+      expand = expansion(mult = c(0.01, 0.03))
+    ) +
+    scale_x_discrete(drop = FALSE) +
+    labs(
+      title = title,
+      x = NULL,
+      y = NULL,
+      colour = "Method",
+      linetype = "Method",
+      shape = "Method"
+    ) +
+    theme_classic(base_size = 18) +
+    theme(
+      legend.position = if (show_legend) "top" else "none",
+      legend.direction = "horizontal",
+      legend.title = element_text(size = 16, face = "bold"),
+      legend.text = element_text(size = 14),
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      strip.background = element_rect(fill = "grey95", colour = "black"),
+      strip.text = element_text(size = 12),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
+      axis.text.y = element_text(size = 11),
+      axis.ticks = element_line(linewidth = 0.5),
+      axis.ticks.length = unit(2.5, "pt"),
+      panel.spacing = unit(0.65, "lines"),
+      plot.margin = margin(4, 4, 4, 4)
+    )
+
+  if (p0 > 0 && q0 == 0) {
+    g <- g + facet_grid(. ~ psi_label, labeller = label_parsed)
+  } else if (p0 == 0 && q0 > 0) {
+    g <- g + facet_grid(. ~ nu_label, labeller = label_parsed)
+  } else if (p0 > 0 && q0 > 0) {
+    g <- g + facet_grid(nu_label ~ psi_label, labeller = label_parsed)
+  }
+
+  g
+}
+
+make_method_legend <- function() {
+  
+  legend_df <- data.frame(
+    method = factor(
+      c(
+        "Box Jenkins",
+        "Functional IC",
+        "Auto Functional IC"
+      ),
+      levels = c(
+        "Box Jenkins",
+        "Functional IC",
+        "Auto Functional IC"
+      )
+    ),
+    
+    group_center = c(
+      1.6,
+      4.3,
+      7.0
+    ),
+    
+    y = 1
+  ) %>%
+    mutate(
+      x = group_center - 0.65,
+      xend = group_center - 0.10,
+      x_text = group_center + 0.15
+    )
+  
+  ggplot(legend_df) +
+    annotate(
+      "text",
+      x = 0,
+      y = 1,
+      label = "Method",
+      hjust = 0,
+      size = 6,
+      fontface = "bold"
+    ) +
+    geom_segment(
+      aes(
+        x = x,
+        xend = xend,
+        y = y,
+        yend = y,
+        colour = method,
+        linetype = method
+      ),
+      linewidth = 0.9,
+      show.legend = FALSE
+    ) +
+    geom_point(
+      aes(
+        x = xend,
+        y = y,
+        colour = method,
+        shape = method
+      ),
+      size = 3,
+      show.legend = FALSE
+    ) +
+    geom_text(
+      aes(
+        x = x_text,
+        y = y,
+        label = method
+      ),
+      hjust = 0,
+      size = 5.5
+    ) +
+    scale_colour_manual(
+      values = method_cols
+    ) +
+    scale_linetype_manual(
+      values = method_ltys
+    ) +
+    scale_shape_manual(
+      values = method_shapes
+    ) +
+    coord_cartesian(
+      xlim = c(0, 9.2),
+      ylim = c(0.85, 1.15),
+      clip = "off"
+    ) +
+    theme_void(
+      base_size = 16
+    ) +
+    theme(
+      legend.position = "none",
+      plot.margin = margin(
+        0,
+        0,
+        0,
+        0
+      )
+    )
+}
+
+combine_four_models_shared_axes <- function(
+    df,
+    models,
+    titles,
+    file_name = NULL,
+    width = 16,
+    height = 12
+) {
+  
+  legend <- make_method_legend()
+  
+  p1 <- plot_order_accuracy_one_model(df, models[1], titles[1], show_legend = FALSE) +
+    theme(legend.position = "none")
+  
+  p2 <- plot_order_accuracy_one_model(df, models[2], titles[2], show_legend = FALSE) +
+    theme(legend.position = "none")
+  
+  p3 <- plot_order_accuracy_one_model(df, models[3], titles[3], show_legend = FALSE) +
+    theme(legend.position = "none")
+  
+  p4 <- plot_order_accuracy_one_model(df, models[4], titles[4], show_legend = FALSE) +
+    theme(legend.position = "none")
+  
+  main_grid <- cowplot::plot_grid(
+    p1, p2,
+    p3, p4,
+    ncol = 2,
+    align = "hv",
+    axis = "tblr"
+  )
+  
+  grid_with_shared_labels <- cowplot::ggdraw() +
+    cowplot::draw_plot(
+      main_grid,
+      x = 0.075,
+      y = 0.08,
+      width = 0.91,
+      height = 0.90
+    ) +
+    cowplot::draw_label(
+      "Selection accuracy",
+      x = 0.018,
+      y = 0.53,
+      angle = 90,
+      size = 20
+    ) +
+    cowplot::draw_label(
+      "Sample size T",
+      x = 0.53,
+      y = 0.02,
+      size = 20
+    )
+  
+  final_plot <- cowplot::plot_grid(
+    legend,
+    grid_with_shared_labels,
+    ncol = 1,
+    rel_heights = c(0.06, 1)
+  )
+  
+  if (!is.null(file_name)) {
+    ggsave(
+      filename = file_name,
+      plot = final_plot,
+      width = width,
+      height = height,
+      dpi = 300
+    )
+  }
+  
+  final_plot
+}
+
+```
+
+
+### Plotting
+```{r}
+p_far_fma <- combine_four_models_shared_axes(
+  df = order_acc_summary,
+  models = c("(1,0)", "(2,0)", "(0,1)", "(0,2)"),
+  titles = c("FARMA(1,0)", "FARMA(2,0)", "FARMA(0,1)", "FARMA(0,2)"),
+  file_name = "order_accuracy_far_fma_2x2.pdf",
+  width = 16,
+  height = 12
+)
+
+p_farma <- combine_four_models_shared_axes(
+  df = order_acc_summary,
+  models = c("(1,1)", "(2,1)", "(1,2)", "(2,2)"),
+  titles = c("FARMA(1,1)", "FARMA(2,1)", "FARMA(1,2)", "FARMA(2,2)"),
+  file_name = "order_accuracy_farma_2x2.pdf",
+  width = 16,
+  height = 12
+)
+
+p_farma
+
+
+```
+
+
+
+
+
+# 2,1 case
+```{r}
+compute_pi_FARMA <- function(
+    ref = 101,
+    p,
+    q,
+    ar_strength = 0.6,
+    ma_strength = 0.6,
+    lag_strength = "equal",
+    max_lag = 10
+) {
+
+  if (p < 0 || q < 0) {
+    stop("p and q must be non-negative.")
+  }
+
+  if (p == 0 && q == 0) {
+    stop("At least one of p or q must be positive.")
+  }
+
+  zero_mat <- matrix(0, ref, ref)
+
+  if (p > 0) {
+    Phi_kernel_list <- generate_AR_kernels(
+      ref = ref,
+      p = p,
+      ar_strength = ar_strength,
+      lag_strength = lag_strength
+    )
+
+    Phi_list <- lapply(
+      Phi_kernel_list,
+      function(A) A / ref
+    )
+  } else {
+    Phi_list <- list()
+  }
+
+  if (q > 0) {
+    Theta_kernel_list <- generate_MA_kernels(
+      ref = ref,
+      q = q,
+      ma_strength = ma_strength,
+      lag_strength = lag_strength
+    )
+
+    Theta_list <- lapply(
+      Theta_kernel_list,
+      function(A) A / ref
+    )
+  } else {
+    Theta_list <- list()
+  }
+
+  get_Phi <- function(k) {
+    if (k <= p) Phi_list[[k]] else zero_mat
+  }
+
+  get_Theta <- function(k) {
+    if (k <= q) Theta_list[[k]] else zero_mat
+  }
+
+  Pi_list <- vector("list", max_lag)
+
+  for (k in seq_len(max_lag)) {
+
+    Pi_k <- get_Phi(k) + get_Theta(k)
+
+    if (q > 0 && k >= 2) {
+      for (j in seq_len(min(q, k - 1))) {
+        Pi_k <-
+          Pi_k -
+          Theta_list[[j]] %*% Pi_list[[k - j]]
+      }
+    }
+
+    Pi_list[[k]] <- Pi_k
+  }
+
+  summary_table <- data.frame(
+    lag = seq_len(max_lag),
+    spectral_norm = vapply(
+      Pi_list,
+      function(A) norm(A, type = "2"),
+      numeric(1)
+    ),
+    hilbert_schmidt_norm = vapply(
+      Pi_list,
+      function(A) norm(A, type = "F"),
+      numeric(1)
+    )
+  )
+
+  list(
+    Phi = Phi_list,
+    Theta = Theta_list,
+    Pi = Pi_list,
+    summary = summary_table
+  )
+}
+
+
+pi22 = compute_pi_FARMA(p = 2, q = 2,ar_strength = 0.8,
+    ma_strength = 0.5,
+    lag_strength = "equal")
+
+pi22$summary
+
+pi21 = compute_pi_FARMA(p = 2, q = 1,ar_strength = 0.8,
+    ma_strength = 0.5,
+    lag_strength = "equal")
+
+pi21$summary
+```
+
+
+
+
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+simple_result <- order_select_comapre$simple_result
+IC_detail <- order_select_comapre$IC_detail
+
+target_simple <- simple_result %>%
+  dplyr::filter(
+    method == "Adaptive_IC",
+    dplyr::near(ar_strength, 0.8),
+    dplyr::near(ma_strength, 0.5),
+    p_true == 2,
+    q_true %in% c(1, 2)
+  )
+
+target_ic <- IC_detail %>%
+  dplyr::filter(
+    dplyr::near(ar_strength, 0.8),
+    dplyr::near(ma_strength, 0.5),
+    p_true == 2,
+    q_true %in% c(1, 2)
+  ) %>%
+  dplyr::mutate(
+    true_model = paste0("FARMA(", p_true, ",", q_true, ")"),
+    candidate = paste0("FARMA(", p, ",", q, ")"),
+    total_order = p + q,
+    true_total_order = p_true + q_true
+  )
+
+selection_frequency <- target_simple %>%
+  dplyr::count(
+    n,
+    p_true,
+    q_true,
+    p_hat,
+    q_hat,
+    name = "frequency"
+  ) %>%
+  dplyr::group_by(
+    n,
+    p_true,
+    q_true
+  ) %>%
+  dplyr::mutate(
+    proportion = frequency / sum(frequency)
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::arrange(
+    p_true,
+    q_true,
+    n,
+    dplyr::desc(proportion)
+  )
+
+selection_frequency
+
+accuracy_by_T <- target_simple %>%
+  dplyr::group_by(
+    n,
+    p_true,
+    q_true
+  ) %>%
+  dplyr::summarise(
+    accuracy = mean(correct, na.rm = TRUE),
+    n_success = sum(!is.na(correct)),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(
+    p_true,
+    q_true,
+    n
+  )
+
+accuracy_by_T
+
+candidate_summary <- target_ic %>%
+  dplyr::filter(
+    n == 5000,
+    (
+      p_true == 2 & q_true == 1 &
+        (
+          (p == 1 & q == 1) |
+          (p == 2 & q == 0) |
+          (p == 1 & q == 2) |
+          (p == 3 & q == 0) |
+          (p == 2 & q == 1) |
+          (p == 2 & q == 2)
+        )
+    ) |
+      (
+        p_true == 2 & q_true == 2 &
+          (
+            (p == 1 & q == 3) |
+            (p == 4 & q == 0) |
+            (p == 1 & q == 2) |
+            (p == 2 & q == 1) |
+            (p == 3 & q == 1) |
+            (p == 2 & q == 2)
+          )
+      )
+  ) %>%
+  dplyr::group_by(
+    true_model,
+    candidate,
+    p,
+    q,
+    total_order
+  ) %>%
+  dplyr::summarise(
+    mean_F_T = mean(F_T, na.rm = TRUE),
+    sd_F_T = sd(F_T, na.rm = TRUE),
+    mean_penalty = mean(penalty, na.rm = TRUE),
+    mean_IC = mean(IC, na.rm = TRUE),
+    sd_IC = sd(IC, na.rm = TRUE),
+    convergence_rate = mean(converged, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(
+    true_model,
+    mean_IC
+  )
+
+candidate_summary
+
+best_raw_fit_frequency <- target_ic %>%
+  dplyr::filter(
+    n == 5000,
+    is.finite(F_T),
+    converged == TRUE
+  ) %>%
+  dplyr::group_by(
+    true_model,
+    seed
+  ) %>%
+  dplyr::slice_min(
+    F_T,
+    n = 1,
+    with_ties = FALSE
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::count(
+    true_model,
+    candidate,
+    name = "frequency",
+    sort = TRUE
+  ) %>%
+  dplyr::group_by(true_model) %>%
+  dplyr::mutate(
+    proportion = frequency / sum(frequency)
+  ) %>%
+  dplyr::ungroup()
+
+best_raw_fit_frequency
+
+penalty_by_T <- target_ic %>%
+  dplyr::mutate(
+    penalty_unit = log(log(n)) * delta_hat
+  ) %>%
+  dplyr::group_by(
+    n,
+    true_model,
+    seed
+  ) %>%
+  dplyr::summarise(
+    delta_hat = dplyr::first(delta_hat),
+    penalty_unit = dplyr::first(penalty_unit),
+    .groups = "drop"
+  ) %>%
+  dplyr::group_by(
+    n,
+    true_model
+  ) %>%
+  dplyr::summarise(
+    mean_delta_hat = mean(delta_hat, na.rm = TRUE),
+    sd_delta_hat = sd(delta_hat, na.rm = TRUE),
+    mean_penalty_unit = mean(penalty_unit, na.rm = TRUE),
+    sd_penalty_unit = sd(penalty_unit, na.rm = TRUE),
+    n_rep = dplyr::n_distinct(seed),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(
+    true_model,
+    n
+  )
+
+penalty_by_T
+
+true_fit_gap <- target_ic %>%
+  dplyr::filter(
+    n == 5000,
+    is.finite(F_T),
+    converged == TRUE
+  ) %>%
+  dplyr::group_by(
+    true_model,
+    seed
+  ) %>%
+  dplyr::mutate(
+    true_F_T = F_T[
+      p == p_true &
+        q == q_true
+    ][1],
+    true_IC = IC[
+      p == p_true &
+        q == q_true
+    ][1]
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(
+    !(p == p_true & q == q_true)
+  ) %>%
+  dplyr::group_by(
+    true_model,
+    seed
+  ) %>%
+  dplyr::summarise(
+    best_competing_F_T = min(F_T, na.rm = TRUE),
+    best_competing_IC = min(IC, na.rm = TRUE),
+    true_F_T = dplyr::first(true_F_T),
+    true_IC = dplyr::first(true_IC),
+    FT_gap_true_minus_best =
+      true_F_T - best_competing_F_T,
+    IC_gap_true_minus_best =
+      true_IC - best_competing_IC,
+    .groups = "drop"
+  )
+
+true_fit_gap_summary <- true_fit_gap %>%
+  dplyr::group_by(true_model) %>%
+  dplyr::summarise(
+    mean_FT_gap_true_minus_best =
+      mean(FT_gap_true_minus_best, na.rm = TRUE),
+    mean_IC_gap_true_minus_best =
+      mean(IC_gap_true_minus_best, na.rm = TRUE),
+    proportion_true_has_best_F_T =
+      mean(FT_gap_true_minus_best < 0, na.rm = TRUE),
+    proportion_true_has_best_IC =
+      mean(IC_gap_true_minus_best < 0, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+true_fit_gap_summary
+
+ggplot(
+  candidate_summary,
+  aes(
+    x = candidate,
+    y = mean_F_T,
+    group = 1
+  )
+) +
+  geom_line(linewidth = 0.7) +
+  geom_point(size = 2.5) +
+  facet_wrap(
+    ~ true_model,
+    scales = "free_y"
+  ) +
+  labs(
+    x = "Candidate model",
+    y = "Mean fit term"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    )
+  )
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+penalty_by_T <- order_select_comapre$IC_detail %>%
+  dplyr::mutate(
+    penalty_unit = log(log(n)) * delta_hat
+  ) %>%
+  dplyr::group_by(n, seed) %>%
+  dplyr::summarise(
+    delta_hat = dplyr::first(delta_hat),
+    penalty_unit = dplyr::first(penalty_unit),
+    .groups = "drop"
+  ) %>%
+  dplyr::group_by(n) %>%
+  dplyr::summarise(
+    mean_delta_hat = mean(delta_hat, na.rm = TRUE),
+    sd_delta_hat = sd(delta_hat, na.rm = TRUE),
+    mean_penalty_unit = mean(penalty_unit, na.rm = TRUE),
+    sd_penalty_unit = sd(penalty_unit, na.rm = TRUE),
+    n_rep = dplyr::n_distinct(seed),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(n)
+
+penalty_by_T
+```
+
+

@@ -1,0 +1,19 @@
+# macOS and editor state
+.DS_Store
+.Rproj.user/
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+
+# Temporary Microsoft Office lock files
+~$*
+**/~$*
+
+# Generated R Markdown / knitr working directories
+*_cache/
+*_files/
+
+# Raw file exceeds GitHub's 100 MB per-file limit.
+# Keep the local copy; document or distribute it separately (or use Git LFS).
+Empirical Study/data/opsd_time_series_60min_2020.csv

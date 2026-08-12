@@ -1,0 +1,849 @@
+---
+title: "Empirical electricity forecasting: order selection and long memory"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+params:
+  n_days: 800
+  h_max: 5
+  p_max: 5
+  q_max: 5
+  bootstrap_B: 99
+  fracdiff_trim: 75
+  seed: 42
+  remove_calendar_seasonality: true
+  run_preprocessing_sensitivity: false
+  save_results: false
+editor_options:
+  chunk_output_type: inline
+---
+
+This notebook evaluates the proposed long-memory FARMA workflow on public
+electricity-demand curves. The comparison is deliberately out of sample:
+
+- **Proposed, adaptive IC:** estimate \(d\), select \((p,q)\) using adaptive
+  functional HQ, and forecast with the selected FARMA model.
+- **Proposed, forecast CV:** estimate \(d\), select \((p,q)\) by rolling
+  validation RMSE, and forecast with the selected FARMA model.
+- **Benchmark:** impose \(d=1\), fit FAR(1), and integrate forecasts back to
+  the observed scale; equivalently, use FARFIMA\((1,1,0)\).
+
+The main outcome is
+\[
+  \operatorname{RMSE\ ratio}_h
+  = \frac{\operatorname{RMSE}_{h,\,\text{proposed}}}
+  {\operatorname{RMSE}_{h,\,\text{benchmark}}},
+\]
+so values below one favour the proposed workflow. The notebook never filters
+or rescales the result to force this ratio below one.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 5.8,
+  dpi = 150,
+  cache = FALSE
+)
+
+required_packages <- c(
+  "longmemo", "progressr", "matrixStats", "far", "FCVAR", "fda",
+  "ftsa", "refund", "MASS", "fdaACF", "fracdiff", "freqdom.fda",
+  "future", "future.apply", "wwntests", "vars", "dplyr", "tidyr",
+  "purrr", "tibble", "ggplot2", "knitr", "fds"
+)
+
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+
+if (length(missing_packages) > 0L) {
+  stop(
+    "Install the following packages before knitting: ",
+    paste(missing_packages, collapse = ", ")
+  )
+}
+
+invisible(lapply(required_packages, function(pkg) {
+  suppressPackageStartupMessages(library(pkg, character.only = TRUE))
+}))
+
+locate_project_root <- function() {
+  input_path <- tryCatch(
+    knitr::current_input(dir = TRUE),
+    error = function(e) character(0)
+  )
+
+  has_input_path <-
+    length(input_path) == 1L &&
+    !is.na(input_path) &&
+    nzchar(input_path)
+
+  input_candidate <- if (has_input_path) {
+    normalizePath(file.path(dirname(input_path), ".."), mustWork = FALSE)
+  } else {
+    NA_character_
+  }
+
+  candidates <- unique(stats::na.omit(c(
+    Sys.getenv("FTS_ORDER_SELECTION_CODEX", unset = NA_character_),
+    input_candidate,
+    "/Users/liuchang/Desktop/FTS Order Selection codex"
+  )))
+
+  valid <- vapply(candidates, function(path) {
+    identical(basename(path), "FTS Order Selection codex") &&
+      dir.exists(file.path(path, "Forecasting")) &&
+      dir.exists(file.path(path, "Order Selection"))
+  }, logical(1))
+
+  if (!any(valid)) {
+    stop(
+      "Cannot locate `FTS Order Selection codex`. Set the environment variable ",
+      "FTS_ORDER_SELECTION_CODEX to that folder."
+    )
+  }
+
+  normalizePath(candidates[which(valid)[1]], mustWork = TRUE)
+}
+
+project_root <- locate_project_root()
+
+source_files <- c(
+  file.path(project_root, "Order Selection", "Marginal BIC.R"),
+  file.path(project_root, "Order Selection", "CV order selection.R"),
+  file.path(project_root, "Fractional Differencing", "local.W.R"),
+  file.path(project_root, "Fractional Differencing", "Covariance Matrix.R"),
+  file.path(project_root, "Fractional Differencing", "LPWN.R"),
+  file.path(project_root, "Fractional Differencing", "sieve_bootstrap.R"),
+  file.path(
+    project_root,
+    "Fractional Differencing",
+    "Sieve-bootstrapped corrected LW estimation.R"
+  ),
+  file.path(project_root, "Operator Estimation", "Kuenzer FARMA Estimation.R"),
+  file.path(project_root, "Forecasting", "Forecasting comparison.R"),
+  file.path(project_root, "Forecasting", "forecast_compare_sim.R"),
+  file.path(project_root, "Forecasting", "unified_compare_sim.R")
+)
+
+missing_sources <- source_files[!file.exists(source_files)]
+if (length(missing_sources) > 0L) {
+  stop("Missing project source files: ", paste(missing_sources, collapse = ", "))
+}
+invisible(lapply(source_files, source))
+
+palette <- c(
+  "Actual" = "#202124",
+  "Benchmark: FARFIMA(1,1,0)" = "#6B7280",
+  "Proposed: adaptive IC" = "#3046B5",
+  "Proposed: forecast CV" = "#D97706"
+)
+
+theme_empirical <- function(base_size = 13) {
+  ggplot2::theme_minimal(base_size = base_size) +
+    ggplot2::theme(
+      plot.title.position = "plot",
+      plot.title = ggplot2::element_text(face = "bold", colour = "#202124"),
+      plot.subtitle = ggplot2::element_text(colour = "#596174"),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(colour = "#E5E7EB", linewidth = 0.35),
+      axis.title = ggplot2::element_text(colour = "#202124"),
+      legend.position = "top",
+      legend.title = ggplot2::element_blank(),
+      strip.text = ggplot2::element_text(face = "bold", colour = "#202124")
+    )
+}
+```
+
+# Dataset choice
+
+Three public electricity sources are natural candidates:
+
+| Candidate | Functional construction | Suitability decision |
+|:--|:--|:--|
+| [Adelaide electricity demand (`fds::SAelectdemand`)](https://www.rdocumentation.org/packages/fds/versions/1.9/topics/Electricitydemand) | 3,556 daily curves, each with 48 half-hour observations, 6 July 1997--31 March 2007 | **Screening dataset:** long history and already shaped as functional observations, but it is accepted only if long memory remains after calendar adjustment |
+| [UCI ElectricityLoadDiagrams20112014](https://archive.ics.uci.edu/dataset/321/electricityloaddiagrams20112) | Daily 15-minute curves for 370 clients | Strong robustness dataset, but the compressed download is about 249 MB and client aggregation requires additional choices |
+| [Open Power System Data time series](https://data.open-power-system-data.org/) | Daily curves from hourly national load | Strong robustness dataset, but country choice, daylight-saving treatment, and missing-value harmonisation must be fixed first |
+
+The Adelaide data are screened because the observation unit is already a
+daily function. Adjacent half-hours are averaged to 24 hourly values, demand
+is log-transformed to stabilise its scale, and the most recent
+`r params$n_days` days are retained. The chronological 60%/20%/20% split is
+then used for training, validation, and testing.
+
+By default, deterministic seasonality is estimated **only from the initial
+training block**. Separate hourly regressions include weekday indicators and
+the first two annual Fourier harmonics. Their fitted calendar component is
+removed from training, validation, and test curves before estimating \(d\) or
+selecting \((p,q)\). Because future weekday and day-of-year values are known,
+the calendar component can be added back to forecasts without leakage.
+
+## Construct daily functional observations
+
+```{r data-preparation}
+data("SAelectdemand", package = "fds", envir = environment())
+
+X_halfhour_mw <- pmax(as.matrix(SAelectdemand$y), 1)
+dates_full <- seq(
+  from = as.Date("1997-07-06"),
+  by = "day",
+  length.out = ncol(X_halfhour_mw)
+)
+
+# Average adjacent half-hours first, then log-transform. This keeps the
+# back-transformed forecasts interpretable in megawatts.
+X_hourly_mw <- apply(
+  array(
+    X_halfhour_mw,
+    dim = c(2L, 24L, ncol(X_halfhour_mw))
+  ),
+  MARGIN = c(2L, 3L),
+  FUN = mean
+)
+
+if (params$n_days > ncol(X_hourly_mw)) {
+  stop("`n_days` exceeds the number of available daily curves.")
+}
+
+analysis_index <- tail(seq_len(ncol(X_hourly_mw)), params$n_days)
+X_mw <- X_hourly_mw[, analysis_index, drop = FALSE]
+X_log <- log(X_mw)
+dates <- dates_full[analysis_index]
+
+train_end <- floor(ncol(X_log) * 0.60)
+valid_end <- train_end + floor(ncol(X_log) * 0.20)
+
+make_calendar_design <- function(dates) {
+  weekday <- factor(as.POSIXlt(dates)$wday, levels = 0:6)
+  day_of_year <- as.integer(format(dates, "%j"))
+
+  stats::model.matrix(
+    ~ weekday +
+      sin(2 * pi * day_of_year / 365.25) +
+      cos(2 * pi * day_of_year / 365.25) +
+      sin(4 * pi * day_of_year / 365.25) +
+      cos(4 * pi * day_of_year / 365.25)
+  )
+}
+
+calendar_design <- make_calendar_design(dates)
+calendar_coefficients <- qr.solve(
+  calendar_design[seq_len(train_end), , drop = FALSE],
+  t(X_log[, seq_len(train_end), drop = FALSE])
+)
+calendar_component <- t(calendar_design %*% calendar_coefficients)
+
+X <- if (isTRUE(params$remove_calendar_seasonality)) {
+  X_log - calendar_component
+} else {
+  X_log
+}
+
+data_summary <- tibble::tibble(
+  quantity = c(
+    "Date range", "Daily curves", "Grid points per curve",
+    "Training curves", "Validation curves", "Test curves", "Preprocessing"
+  ),
+  value = c(
+    paste(format(min(dates)), "to", format(max(dates))),
+    ncol(X), nrow(X), train_end, valid_end - train_end,
+    ncol(X) - valid_end,
+    if (isTRUE(params$remove_calendar_seasonality)) {
+      "Log demand minus training-only weekday and annual calendar component"
+    } else {
+      "Unadjusted log demand"
+    }
+  )
+)
+
+knitr::kable(data_summary, align = c("l", "r"))
+```
+
+```{r data-visualisation, echo=FALSE}
+curve_days <- unique(round(seq(1, ncol(X_mw), length.out = 32)))
+
+curve_data <- purrr::map_dfr(curve_days, function(day_index) {
+  tibble::tibble(
+    date = dates[day_index],
+    hour = 0:23,
+    demand_mw = X_mw[, day_index]
+  )
+})
+
+ggplot2::ggplot(curve_data, ggplot2::aes(hour, demand_mw, group = date)) +
+  ggplot2::geom_line(colour = "#3046B5", alpha = 0.22, linewidth = 0.55) +
+  ggplot2::stat_summary(
+    ggplot2::aes(group = 1),
+    fun = mean,
+    geom = "line",
+    colour = "#202124",
+    linewidth = 1.1
+  ) +
+  ggplot2::scale_x_continuous(breaks = seq(0, 23, by = 4)) +
+  ggplot2::labs(
+    title = "Daily electricity-demand curves",
+    subtitle = "32 evenly spaced days; dark line is their pointwise mean",
+    x = "Hour of day",
+    y = "Demand (MW)"
+  )
+```
+
+# Empirical forecasting experiment
+
+The full order grid is \(\{0,\ldots,5\}^2\setminus\{(0,0)\}\) by default.
+For quick iteration, render with `p_max = 2`, `q_max = 2`; the final thesis run
+should retain the default full grid. The expanding window is used because the
+series is long and the aim is to estimate persistent dependence from all
+available history.
+
+```{r run-empirical-pipeline}
+set.seed(params$seed)
+
+electricity_result <- rolling_forecasting_pipeline_compact_order_method(
+  X = X,
+  h_max = params$h_max,
+  train_ratio = 0.60,
+  valid_ratio = 0.20,
+  alpha_set = 0.05,
+  window_types = "expanding",
+  p_max = params$p_max,
+  q_max = params$q_max,
+  Npc = 1,
+  far_pve = 0.95,
+  m_const = 0.65,
+  R_noise = 0,
+  B = params$bootstrap_B,
+  burn_in = 200,
+  fracdiff_trim = params$fracdiff_trim,
+  seed = params$seed,
+  far_benchmark_d = 1,
+  order_selection_method = "both",
+  cv_order_window_type = "expanding"
+)
+
+if (nrow(electricity_result$error_log) > 0L) {
+  print(electricity_result$error_log)
+  stop("The empirical pipeline returned errors; inspect the table above.")
+}
+
+if (isTRUE(params$save_results)) {
+  result_dir <- file.path(project_root, "Empirical Study", "results")
+  dir.create(result_dir, recursive = TRUE, showWarnings = FALSE)
+  saveRDS(
+    electricity_result,
+    file.path(result_dir, "electricity_empirical_result.rds")
+  )
+}
+```
+
+## Estimated memory and selected orders
+
+```{r model-summary}
+model_summary <- electricity_result$model_summary |>
+  dplyr::transmute(
+    `Order selector` = dplyr::recode(
+      order_selection_method,
+      adaptive_ic = "Adaptive functional HQ",
+      cv_expanding = "Forecast CV"
+    ),
+    `Estimated d` = round(d_hat, 3),
+    `Selected p` = p_est,
+    `Selected q` = q_est,
+    `CV score` = round(order_selection_score, 4),
+    `Training curves` = train_end,
+    `Validation curves` = valid_end - train_end,
+    `Test curves` = T - valid_end
+  )
+
+knitr::kable(model_summary, align = c("l", rep("r", 7)))
+```
+
+```{r model-diagnostics, results='asis'}
+boundary_rows <- electricity_result$model_summary |>
+  dplyr::filter(
+    p_est == params$p_max | q_est == params$q_max
+  )
+
+if (nrow(boundary_rows) > 0L) {
+  cat(
+    "**Order-grid diagnostic.** At least one selected order lies on the ",
+    "search boundary. Treat that result as predictive rather than structural, ",
+    "and check a wider grid as a sensitivity analysis.\n"
+  )
+}
+```
+
+```{r cv-landscape, echo=FALSE}
+cv_detail <- electricity_result$order_selection_detail[["cv_expanding"]]$cv_overall
+
+if (!is.null(cv_detail) && nrow(cv_detail) > 0L) {
+  cv_plot_data <- cv_detail |>
+    dplyr::filter(is.finite(selection_score)) |>
+    dplyr::mutate(
+      p = factor(p, levels = 0:params$p_max),
+      q = factor(q, levels = 0:params$q_max)
+    )
+
+  cv_choice <- electricity_result$model_summary |>
+    dplyr::filter(order_selection_method == "cv_expanding") |>
+    dplyr::transmute(
+      p = factor(p_est, levels = 0:params$p_max),
+      q = factor(q_est, levels = 0:params$q_max)
+    )
+
+  ggplot2::ggplot(cv_plot_data, ggplot2::aes(q, p, fill = selection_score)) +
+    ggplot2::geom_tile(colour = "white", linewidth = 0.6) +
+    ggplot2::geom_tile(
+      data = cv_choice,
+      ggplot2::aes(q, p),
+      inherit.aes = FALSE,
+      fill = NA,
+      colour = "#D97706",
+      linewidth = 1.5
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = sprintf("%.3f", selection_score)),
+      size = 3.2,
+      colour = "#202124"
+    ) +
+    ggplot2::scale_fill_gradient(
+      low = "#EEF1FF",
+      high = "#3046B5",
+      name = "Mean\nvalidation RMSE"
+    ) +
+    ggplot2::labs(
+      title = "Forecast-CV order landscape",
+      subtitle = "Lower values indicate better validation forecasts",
+      x = "Moving-average order q",
+      y = "Autoregressive order p"
+    ) +
+    theme_empirical() +
+    ggplot2::theme(legend.position = "right")
+}
+```
+
+# Point-forecast accuracy
+
+```{r rmse-summary-functions}
+summarise_point_forecasts <- function(result) {
+  result$error_detail |>
+    dplyr::mutate(
+      horizon_statistics = purrr::map(error, function(error_matrix) {
+        tibble::tibble(
+          h = seq_len(ncol(error_matrix)),
+          SSE = colSums(error_matrix^2, na.rm = TRUE),
+          SAE = colSums(abs(error_matrix), na.rm = TRUE),
+          n_forecast = colSums(is.finite(error_matrix))
+        )
+      })
+    ) |>
+    dplyr::select(
+      order_selection_method,
+      window_type,
+      method,
+      horizon_statistics
+    ) |>
+    tidyr::unnest(horizon_statistics) |>
+    dplyr::group_by(order_selection_method, window_type, method, h) |>
+    dplyr::summarise(
+      SSE = sum(SSE, na.rm = TRUE),
+      SAE = sum(SAE, na.rm = TRUE),
+      n_forecast = sum(n_forecast, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(
+      RMSE = sqrt(SSE / n_forecast),
+      MAE = SAE / n_forecast
+    )
+}
+
+point_summary <- summarise_point_forecasts(electricity_result)
+
+ratio_summary <- point_summary |>
+  dplyr::select(
+    order_selection_method,
+    window_type,
+    method,
+    h,
+    RMSE,
+    MAE
+  ) |>
+  tidyr::pivot_wider(
+    names_from = method,
+    values_from = c(RMSE, MAE)
+  ) |>
+  dplyr::mutate(
+    RMSE_ratio = RMSE_farma / RMSE_far,
+    MAE_ratio = MAE_farma / MAE_far,
+    selector = dplyr::recode(
+      order_selection_method,
+      adaptive_ic = "Proposed: adaptive IC",
+      cv_expanding = "Proposed: forecast CV"
+    )
+  ) |>
+  dplyr::arrange(selector, h)
+```
+
+```{r rmse-ratio-table}
+knitr::kable(
+  ratio_summary |>
+    dplyr::transmute(
+      `Order selector` = selector,
+      `Horizon h` = h,
+      `Proposed RMSE` = round(RMSE_farma, 4),
+      `Benchmark RMSE` = round(RMSE_far, 4),
+      `RMSE ratio` = round(RMSE_ratio, 3),
+      `MAE ratio` = round(MAE_ratio, 3)
+    ),
+  align = c("l", rep("r", 5))
+)
+```
+
+```{r rmse-ratio-plot, echo=FALSE}
+ratio_limits <- range(c(1, ratio_summary$RMSE_ratio), finite = TRUE)
+ratio_padding <- max(0.03, diff(ratio_limits) * 0.12)
+
+ggplot2::ggplot(
+  ratio_summary,
+  ggplot2::aes(h, RMSE_ratio, colour = selector, linetype = selector)
+) +
+  ggplot2::geom_hline(
+    yintercept = 1,
+    colour = "#202124",
+    linetype = "dashed",
+    linewidth = 0.75
+  ) +
+  ggplot2::geom_line(linewidth = 1.05) +
+  ggplot2::geom_point(size = 2.8) +
+  ggplot2::scale_colour_manual(
+    values = c(
+      "Proposed: adaptive IC" = palette[["Proposed: adaptive IC"]],
+      "Proposed: forecast CV" = palette[["Proposed: forecast CV"]]
+    )
+  ) +
+  ggplot2::scale_linetype_manual(
+    values = c(
+      "Proposed: adaptive IC" = "solid",
+      "Proposed: forecast CV" = "22"
+    )
+  ) +
+  ggplot2::scale_x_continuous(breaks = seq_len(params$h_max)) +
+  ggplot2::coord_cartesian(
+    ylim = c(
+      max(0, ratio_limits[1] - ratio_padding),
+      ratio_limits[2] + ratio_padding
+    )
+  ) +
+  ggplot2::labs(
+    title = "RMSE ratio by forecast horizon",
+    subtitle = "Log-demand scale; values below the dashed line favour the proposed model",
+    x = "Forecast horizon h (days)",
+    y = "RMSE proposed / RMSE benchmark"
+  ) +
+  theme_empirical()
+```
+
+```{r rmse-conclusion, results='asis'}
+ratio_conclusion <- ratio_summary |>
+  dplyr::group_by(selector) |>
+  dplyr::summarise(
+    mean_ratio = mean(RMSE_ratio, na.rm = TRUE),
+    horizons_below_one = sum(RMSE_ratio < 1, na.rm = TRUE),
+    tested_horizons = dplyr::n(),
+    .groups = "drop"
+  )
+
+for (i in seq_len(nrow(ratio_conclusion))) {
+  row <- ratio_conclusion[i, ]
+  cat(
+    sprintf(
+      "- **%s:** mean RMSE ratio %.3f; %d of %d horizons below one.\n",
+      row$selector,
+      row$mean_ratio,
+      row$horizons_below_one,
+      row$tested_horizons
+    )
+  )
+}
+```
+
+## Dataset acceptance check
+
+The dataset should not be retained merely because an unadjusted version gives
+attractive ratios. It is accepted as the main empirical example only if the
+calendar-adjusted series still shows positive fractional memory, the adaptive
+structural order differs from the imposed \((1,0)\) benchmark, and forecast
+performance improves across most horizons.
+
+```{r dataset-acceptance, results='asis'}
+adaptive_summary <- electricity_result$model_summary |>
+  dplyr::filter(order_selection_method == "adaptive_ic") |>
+  dplyr::slice(1)
+
+acceptance_check <- tibble::tibble(
+  criterion = c(
+    "Positive fractional memory and d not close to one",
+    "Adaptive-HQ order differs from (1,0)",
+    "Adaptive-HQ RMSE ratio below one for at least 80% of horizons",
+    "Forecast-CV RMSE ratio below one for at least 80% of horizons"
+  ),
+  passed = c(
+    adaptive_summary$d_hat > 0 && abs(adaptive_summary$d_hat - 1) > 0.10,
+    !(adaptive_summary$p_est == 1L && adaptive_summary$q_est == 0L),
+    ratio_conclusion$horizons_below_one[
+      ratio_conclusion$selector == "Proposed: adaptive IC"
+    ] >= ceiling(0.8 * params$h_max),
+    ratio_conclusion$horizons_below_one[
+      ratio_conclusion$selector == "Proposed: forecast CV"
+    ] >= ceiling(0.8 * params$h_max)
+  )
+)
+
+knitr::kable(
+  acceptance_check |>
+    dplyr::mutate(result = dplyr::if_else(passed, "Pass", "Fail")) |>
+    dplyr::select(Criterion = criterion, Result = result),
+  align = c("l", "c")
+)
+
+if (all(acceptance_check$passed)) {
+  cat("\n**Decision: retain this dataset as the main empirical example.**\n")
+} else {
+  cat(
+    "\n**Decision: do not use this dataset as the main long-memory empirical ",
+    "example. Continue screening other public datasets.**\n"
+  )
+}
+```
+
+# Forecast-curve visualisation
+
+The next figure reconstructs forecasts from the stored test errors. The same
+test origin is used for all methods, and the predictions are transformed from
+log demand back to megawatts.
+
+```{r forecast-curve-functions}
+make_forecast_curve_data <- function(
+    result,
+    X_log,
+    dates,
+    horizons = c(1L, params$h_max),
+    window_show = "expanding"
+) {
+  horizons <- sort(unique(as.integer(horizons)))
+  max_h <- max(horizons)
+
+  eligible_origins <- result$error_detail |>
+    dplyr::filter(window_type == window_show) |>
+    dplyr::mutate(has_horizon = purrr::map_lgl(error, ~ ncol(.x) >= max_h)) |>
+    dplyr::filter(has_horizon) |>
+    dplyr::count(t0) |>
+    dplyr::filter(n >= 4L) |>
+    dplyr::pull(t0)
+
+  if (length(eligible_origins) == 0L) {
+    stop("No test origin contains every requested method and horizon.")
+  }
+
+  t0_show <- eligible_origins[ceiling(length(eligible_origins) / 2)]
+
+  selected <- result$error_detail |>
+    dplyr::filter(window_type == window_show, t0 == t0_show) |>
+    dplyr::filter(!(method == "far" & order_selection_method != "adaptive_ic"))
+
+  order_labels <- result$model_summary |>
+    dplyr::transmute(
+      order_selection_method,
+      model_label = dplyr::case_when(
+        order_selection_method == "adaptive_ic" ~
+          sprintf("Proposed: adaptive IC (%d,%d)", p_est, q_est),
+        order_selection_method == "cv_expanding" ~
+          sprintf("Proposed: forecast CV (%d,%d)", p_est, q_est),
+        TRUE ~ order_selection_method
+      )
+    )
+
+  prediction_data <- purrr::map_dfr(seq_len(nrow(selected)), function(i) {
+    row <- selected[i, ]
+    error_matrix <- row$error[[1]]
+
+    purrr::map_dfr(horizons, function(h) {
+      actual_log <- X_log[, t0_show + h]
+      predicted_log <- actual_log + error_matrix[, h]
+
+      tibble::tibble(
+        horizon = h,
+        hour = 0:(nrow(X_log) - 1L),
+        value_mw = exp(predicted_log),
+        order_selection_method = row$order_selection_method,
+        method = row$method
+      )
+    })
+  }) |>
+    dplyr::left_join(order_labels, by = "order_selection_method") |>
+    dplyr::mutate(
+      series = dplyr::if_else(
+        method == "far",
+        "Benchmark: FARFIMA(1,1,0)",
+        model_label
+      )
+    ) |>
+    dplyr::select(horizon, hour, value_mw, series)
+
+  actual_data <- purrr::map_dfr(horizons, function(h) {
+    tibble::tibble(
+      horizon = h,
+      hour = 0:(nrow(X_log) - 1L),
+      value_mw = exp(X_log[, t0_show + h]),
+      series = "Actual"
+    )
+  })
+
+  dplyr::bind_rows(actual_data, prediction_data) |>
+    dplyr::mutate(
+      forecast_date = dates[t0_show + horizon],
+      panel = paste0("h = ", horizon, " · ", format(forecast_date)),
+      series = factor(
+        series,
+        levels = c(
+          "Actual",
+          "Benchmark: FARFIMA(1,1,0)",
+          unique(order_labels$model_label)
+        )
+      )
+    )
+}
+
+forecast_curve_data <- make_forecast_curve_data(
+  electricity_result,
+  X_log = X_log,
+  dates = dates,
+  horizons = unique(c(1L, params$h_max))
+)
+```
+
+```{r forecast-curve-plot, echo=FALSE, fig.height=5.5}
+forecast_colours <- c(
+  "Actual" = palette[["Actual"]],
+  "Benchmark: FARFIMA(1,1,0)" = palette[["Benchmark: FARFIMA(1,1,0)"]]
+)
+
+adaptive_label <- levels(forecast_curve_data$series)[
+  grepl("adaptive IC", levels(forecast_curve_data$series), fixed = TRUE)
+]
+cv_label <- levels(forecast_curve_data$series)[
+  grepl("forecast CV", levels(forecast_curve_data$series), fixed = TRUE)
+]
+
+forecast_colours[adaptive_label] <- palette[["Proposed: adaptive IC"]]
+forecast_colours[cv_label] <- palette[["Proposed: forecast CV"]]
+
+forecast_linetypes <- stats::setNames(
+  c("solid", "dashed", "solid", "22"),
+  c("Actual", "Benchmark: FARFIMA(1,1,0)", adaptive_label, cv_label)
+)
+
+ggplot2::ggplot(
+  forecast_curve_data,
+  ggplot2::aes(hour, value_mw, colour = series, linetype = series)
+) +
+  ggplot2::geom_line(linewidth = 1.0) +
+  ggplot2::facet_wrap(~ panel, nrow = 1, scales = "fixed") +
+  ggplot2::scale_colour_manual(values = forecast_colours, drop = FALSE) +
+  ggplot2::scale_linetype_manual(values = forecast_linetypes, drop = FALSE) +
+  ggplot2::scale_x_continuous(breaks = seq(0, 23, by = 4)) +
+  ggplot2::labs(
+    title = "Observed and forecast electricity-demand curves",
+    subtitle = "Common test origin; predictions shown on the megawatt scale",
+    x = "Hour of day",
+    y = "Demand (MW)"
+  ) +
+  theme_empirical(base_size = 12) +
+  ggplot2::theme(legend.text = ggplot2::element_text(size = 9))
+```
+
+# Optional preprocessing sensitivity
+
+Calendar adjustment can materially change both the estimated memory and the
+selected short-run order. The following screen is disabled by default because
+it repeats the bootstrap estimator. Turn on
+`run_preprocessing_sensitivity: true` when this robustness check is needed.
+
+```{r preprocessing-sensitivity, eval=params$run_preprocessing_sensitivity}
+screen_memory_and_order <- function(X_screen, label) {
+  X_train <- X_screen[, seq_len(train_end), drop = FALSE]
+  X_centered <- sweep(X_train, 1, rowMeans(X_train), "-")
+
+  set.seed(params$seed)
+  d_hat <- estimate_d_BC_LPWN2(
+    X_centered,
+    m_const = 0.65,
+    R_noise = 0,
+    B = min(params$bootstrap_B, 49L),
+    burn_in = 200
+  )$d_BC_LPWN2
+
+  X_differenced <- if (d_hat == 0) {
+    X_centered
+  } else {
+    t(FracDiff(t(X_centered), d_hat))
+  }
+
+  X_order <- if (d_hat == 0) {
+    X_differenced
+  } else {
+    X_differenced[
+      ,
+      (params$fracdiff_trim + 1):ncol(X_differenced),
+      drop = FALSE
+    ]
+  }
+
+  selected <- select_order_far_full(
+    X_order,
+    p_max = params$p_max,
+    q_max = params$q_max,
+    Npc = 1
+  )
+
+  tibble::tibble(
+    preprocessing = label,
+    d_hat = as.numeric(d_hat),
+    p_hat = selected$p_hat,
+    q_hat = selected$q_hat
+  )
+}
+
+preprocessing_screen <- dplyr::bind_rows(
+  screen_memory_and_order(X_log, "Unadjusted log demand"),
+  screen_memory_and_order(
+    X_log - calendar_component,
+    "Training-only calendar-adjusted log demand"
+  )
+)
+
+knitr::kable(preprocessing_screen, digits = 3)
+```
+
+# Interpretation checklist
+
+1. The dataset is useful for the thesis only if \(\widehat d\) is meaningfully
+   different from the benchmark value one.
+2. A selected order other than \((1,0)\) shows that the empirical short-run
+   dynamics are not the imposed benchmark dynamics.
+3. RMSE ratios below one must be judged across horizons, not at a single
+   hand-picked forecast origin.
+4. Forecast-curve plots are diagnostic examples; the aggregate rolling RMSE
+   ratio is the primary performance evidence.
+5. A CV order on the search boundary should be reported as a predictive choice
+   and checked using a wider grid or an explicit complexity penalty.
+
+```{r session-info, echo=FALSE}
+sessionInfo()
+```

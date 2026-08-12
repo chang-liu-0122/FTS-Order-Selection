@@ -1,0 +1,105 @@
+---
+title: "Order Selection WN simulation"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+library(wwntests)
+```
+
+
+```{r}
+sim <- sim_FARMA(
+            n = 1000,
+            d = 0,
+            no_grid = 101,
+            seed_number = 2,
+            p = 1,
+            q = 1,
+            ar_strength = 0.6,
+            ma_strength = 0.6,
+            lag_strength = "equal"
+          )
+X = sim$X
+```
+
+
+
+```{r}
+l = floor(log(ncol(X)))
+
+select_order_residual_test(X = X,
+                                       Npc = 1,
+                                       lag_test = l,
+                                       alpha = 0.05,
+                                       verbose = TRUE) 
+```
+
+
+
+
+
+
+```{r}
+library(doMC)
+library(foreach)
+
+
+n_cores <- 10
+
+registerDoMC(cores = n_cores)
+
+seeds <- 1:50
+
+results <- foreach(
+  seed = seeds,
+  .combine = rbind,
+  .packages = c("wwntests")
+) %dopar% {
+
+  sim <- sim_FARMA(
+    n = 5000,
+    d = 0,
+    no_grid = 101,
+    seed_number = seed,
+    p = 2,
+    q = 1,
+    ar_strength = 0.9,
+    ma_strength = 0.9,
+    lag_strength = "equal"
+  )
+
+  X <- sim$X
+  l <- floor(log(ncol(X)))
+
+  res <- select_order_residual_test(
+    X = X,
+    Npc = 1,
+    lag_test = l,
+    alpha = 0.05,
+    verbose = FALSE
+  )
+
+  if (is.null(res)) {
+
+    return(
+      data.frame(
+        seed = seed,
+        p_hat = NA,
+        q_hat = NA,
+        p_value = NA
+      )
+    )
+  }
+
+  data.frame(
+    seed = seed,
+    p_hat = res$p,
+    q_hat = res$q,
+    p_value = res$p_value
+  )
+}
+```
+
