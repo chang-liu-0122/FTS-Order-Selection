@@ -177,6 +177,7 @@ combine_forecast_results <- function(res_main, res_add) {
 }
 
 unified_forecast_res <- combine_forecast_results(unified_forecast_res, unified_forecast_res_add)
+unified_wis <- make_wis_summary(unified_forecast_res)
 
 ```
 
@@ -1255,7 +1256,7 @@ p_unified_rmse_ratio_2x2 <-
 ```
 
 
-#### Tables of RMSE ratio
+#### Table of RMSE, MAE, and WIS
 
 ```{r}
 benchmark_res <- unified_forecast_res$ratio_summary %>%
@@ -1300,9 +1301,78 @@ plugin_res <- unified_forecast_res$ratio_summary %>%
     .groups = "drop"
   )
 
-unified_table <- bind_rows(benchmark_res, plugin_res) %>%
+benchmark_wis <- unified_wis %>%
+  filter(
+    n == 1000,
+    window_type == "expanding",
+    h %in% c(1, 5, 10),
+    d_true %in% c(0.2, 0.6, 1, 1.4),
+    method == "far"
+  ) %>%
+  select(
+    p_true,
+    q_true,
+    d_true,
+    ar_strength,
+    ma_strength,
+    h,
+    WIS
+  ) %>%
+  distinct() %>%
+  group_by(p_true, q_true, d_true, h) %>%
+  summarise(WIS = mean(WIS), .groups = "drop") %>%
+  mutate(Method = "Benchmark")
+
+plugin_wis_source <- unified_wis %>%
+  filter(
+    n == 1000,
+    window_type == "expanding",
+    h %in% c(1, 5, 10),
+    d_true %in% c(0.2, 0.6, 1, 1.4),
+    method == "farma"
+  ) %>%
+  mutate(
+    Method = case_when(
+      order_selection_method == "adaptive_ic" ~ "IC",
+      grepl("^cv", order_selection_method) ~ "CV",
+      TRUE ~ NA_character_
+    )
+  )
+
+if (nrow(plugin_wis_source) == 0L || anyNA(plugin_wis_source$Method)) {
+  stop("Unified WIS methods are missing or invalid.", call. = FALSE)
+}
+
+plugin_wis <- plugin_wis_source %>%
+  group_by(p_true, q_true, d_true, h, Method) %>%
+  summarise(WIS = mean(WIS), .groups = "drop")
+
+unified_metrics_long <- bind_rows(benchmark_res, plugin_res)
+unified_wis_long <- bind_rows(benchmark_wis, plugin_wis)
+unified_table_keys <- c("p_true", "q_true", "d_true", "h", "Method")
+
+unified_wis_duplicates <- unified_wis_long %>%
+  group_by(across(all_of(unified_table_keys))) %>%
+  summarise(key_count = n(), .groups = "drop") %>%
+  filter(key_count != 1L)
+
+if (nrow(unified_wis_long) == 0L ||
+    any(!is.finite(unified_wis_long$WIS)) ||
+    nrow(unified_wis_duplicates) > 0L) {
+  stop("Unified WIS table data are missing, invalid, or duplicated.", call. = FALSE)
+}
+
+unified_table_long <- unified_metrics_long %>%
+  left_join(unified_wis_long, by = unified_table_keys)
+
+if (nrow(unified_table_long) != nrow(unified_metrics_long) ||
+    any(!is.finite(unified_table_long$WIS))) {
+  stop("Unified RMSE/MAE rows do not match WIS one-to-one.", call. = FALSE)
+}
+
+unified_table <- unified_table_long %>%
   mutate(Method = factor(Method, levels = c("Benchmark", "IC", "CV"))) %>%
-  pivot_wider(names_from = Method, values_from = c(RMSE, MAE)) %>%
+  pivot_wider(names_from = Method, values_from = c(RMSE, MAE, WIS)) %>%
   arrange(p_true, q_true, d_true, h) %>%
   mutate(Model = paste0("$(", p_true, ",", q_true, ")$"))
 
@@ -1311,6 +1381,7 @@ unified_table <- unified_table %>%
   mutate(
     min_RMSE = min(c(RMSE_Benchmark, RMSE_IC, RMSE_CV), na.rm = TRUE),
     min_MAE = min(c(MAE_Benchmark, MAE_IC, MAE_CV), na.rm = TRUE),
+    min_WIS = min(c(WIS_Benchmark, WIS_IC, WIS_CV), na.rm = TRUE),
     
     RMSE_Benchmark_print = ifelse(
       isTRUE(all.equal(RMSE_Benchmark, min_RMSE)),
@@ -1354,6 +1425,28 @@ unified_table <- unified_table %>%
       isTRUE(all.equal(MAE_CV, min_MAE)),
       paste0("\\textcolor{blue}{\\textbf{", sprintf("%.4f", MAE_CV), "}}"),
       sprintf("%.4f", MAE_CV)
+    ),
+
+    WIS_Benchmark_print = ifelse(
+      isTRUE(all.equal(WIS_Benchmark, min_WIS)),
+      paste0(
+        "\\textcolor{purple}{\\textbf{",
+        sprintf("%.4f", WIS_Benchmark),
+        "}}"
+      ),
+      sprintf("%.4f", WIS_Benchmark)
+    ),
+
+    WIS_IC_print = ifelse(
+      isTRUE(all.equal(WIS_IC, min_WIS)),
+      paste0("\\textcolor{purple}{\\textbf{", sprintf("%.4f", WIS_IC), "}}"),
+      sprintf("%.4f", WIS_IC)
+    ),
+
+    WIS_CV_print = ifelse(
+      isTRUE(all.equal(WIS_CV, min_WIS)),
+      paste0("\\textcolor{purple}{\\textbf{", sprintf("%.4f", WIS_CV), "}}"),
+      sprintf("%.4f", WIS_CV)
     )
   ) %>%
   ungroup()
@@ -1384,12 +1477,18 @@ unified_table_print <- unified_table %>%
     RMSE_CV_print,
     MAE_Benchmark_print,
     MAE_IC_print,
-    MAE_CV_print
+    MAE_CV_print,
+    WIS_Benchmark_print,
+    WIS_IC_print,
+    WIS_CV_print
   )
 
 names(unified_table_print) <- c("$(p,q)$",
                                 "$d$",
                                 "$h$",
+                                "Bench.",
+                                "IC",
+                                "CV",
                                 "Bench.",
                                 "IC",
                                 "CV",
@@ -1403,27 +1502,36 @@ latex_table <- unified_table_print %>%
     booktabs = TRUE,
     longtable = TRUE,
     escape = FALSE,
-    align = c("c", "c", "c", "r", "r", "r", "r", "r", "r"),
+    align = c(
+      "c", "c", "c",
+      "r", "r", "r",
+      "r", "r", "r",
+      "r", "r", "r"
+    ),
     caption = paste0(
       "Averaged forecasting results for the unified setting with $T=1000$ ",
       "under the expanding-window scheme. Results are averaged over the ",
       "dependence-strength settings. Model orders are reported as $(p,q)$. ",
-      "The smallest RMSE within each setting is highlighted in red, and ",
-      "the smallest MAE is highlighted in blue."
+      "The smallest RMSE within each setting is highlighted in red, ",
+      "the smallest MAE in blue, and the smallest WIS in purple. ",
+      "WIS combines the 80\\% and 95\\% prediction intervals."
     ),
     label = "tab:unified_forecast_expanding"
   ) %>%
-  add_header_above(c(" " = 3, "RMSE" = 3, "MAE" = 3), escape = FALSE) %>%
-  kable_styling(latex_options = "repeat_header", font_size = 9)
+  add_header_above(
+    c(" " = 3, "RMSE" = 3, "MAE" = 3, "WIS" = 3),
+    escape = FALSE
+  ) %>%
+  kable_styling(latex_options = "repeat_header", font_size = 8)
 
-for (i in seq_len(nrow(d_groups) - 1)) {
+for (i in seq_len(max(nrow(d_groups) - 1L, 0L))) {
   if (!(d_groups$end[i] %in% model_groups$end)) {
     latex_table <- latex_table %>%
-      row_spec(d_groups$end[i], extra_latex_after = "\\cmidrule(lr){2-9}")
+      row_spec(d_groups$end[i], extra_latex_after = "\\cmidrule(lr){2-12}")
   }
 }
 
-for (i in seq_len(nrow(model_groups) - 1)) {
+for (i in seq_len(max(nrow(model_groups) - 1L, 0L))) {
   latex_table <- latex_table %>%
     row_spec(model_groups$end[i], extra_latex_after = "\\midrule")
 }
@@ -2015,16 +2123,35 @@ method_shapes_score_ratio <- c(
 )
 
 prepare_unified_score_ratio_data <- function(df,
-                                             alpha_show,
+                                             alpha_show = NULL,
                                              T_show = 1000,
-                                             window_show = "expanding") {
-  
+                                             window_show = "expanding",
+                                             score_col = "Score") {
+  required_cols <- c(
+    "n", "d_true", "ar_strength", "ma_strength", "p_true", "q_true",
+    "h", "method", "order_selection_method", "window_type", score_col
+  )
+
+  if (!all(required_cols %in% names(df))) {
+    stop("The score-ratio input is missing required columns.", call. = FALSE)
+  }
+
+  if (!is.null(alpha_show) && !"alpha" %in% names(df)) {
+    stop("The score-ratio input is missing `alpha`.", call. = FALSE)
+  }
+
   df_use <- df %>%
     filter(
-      abs(alpha - alpha_show) < 1e-10,
       n == T_show,
       tolower(window_type) == tolower(window_show)
-    ) %>%
+    )
+
+  if (!is.null(alpha_show)) {
+    df_use <- df_use %>%
+      filter(abs(alpha - alpha_show) < 1e-10)
+  }
+
+  df_use <- df_use %>%
     mutate(
       forecast_method = case_when(
         tolower(as.character(method)) %in% c("far", "far(1)", "benchmark") ~ "FARFIMA(1,1,0)",
@@ -2046,18 +2173,23 @@ prepare_unified_score_ratio_data <- function(df,
       ma_strength,
       p_true,
       q_true,
-      alpha,
       h,
       forecast_method
     ) %>%
     summarise(
-      Score = mean(Score, na.rm = TRUE),
+      score_value = mean(.data[[score_col]], na.rm = TRUE),
       .groups = "drop"
     ) %>%
     pivot_wider(
       names_from = forecast_method,
-      values_from = Score
+      values_from = score_value
     )
+
+  required_methods <- c("FARFIMA(1,1,0)", "Functional IC", "CV")
+
+  if (!all(required_methods %in% names(df_use))) {
+    stop("Benchmark, Functional IC, or CV scores are missing.", call. = FALSE)
+  }
   
   df_use %>%
     mutate(
@@ -2071,7 +2203,6 @@ prepare_unified_score_ratio_data <- function(df,
       ma_strength,
       p_true,
       q_true,
-      alpha,
       h,
       score_ratio_adaptive,
       score_ratio_cv
@@ -2399,7 +2530,8 @@ combine_four_unified_score_ratio_models_shared_axes <- function(
     file_name = NULL,
     width = 16,
     height = 12,
-    y_limits = NULL) {
+    y_limits = NULL,
+    y_axis_label = "Interval score ratio to FARFIMA(1,1,0)") {
   
   if (is.null(y_limits)) {
     
@@ -2472,7 +2604,7 @@ combine_four_unified_score_ratio_models_shared_axes <- function(
       height = 0.89
     ) +
     cowplot::draw_label(
-      "Interval score ratio to FARFIMA(1,1,0)",
+      y_axis_label,
       x = 0.020,
       y = 0.53,
       angle = 90,
@@ -2499,7 +2631,8 @@ combine_four_unified_score_ratio_models_shared_axes <- function(
       plot = final_plot,
       width = width,
       height = height,
-      dpi = 1200
+      dpi = 1200,
+      bg = "white"
     )
   }
   
@@ -2576,8 +2709,140 @@ p_unified_score_ratio_80_expanding <-
 ```
 
 
+### Plot of weighted interval score ratio
 
-#### Tables of Score
+The WIS combines the 80\% and 95\% prediction intervals with the absolute
+error of the point forecast. Values below one favour the selected FARFIMA
+model over the FARFIMA$(1,1,0)$ benchmark.
+
+```{r}
+prepare_unified_wis_ratio_data <- function(df,
+                                           T_show = 1000,
+                                           window_show = "expanding") {
+  required_cols <- c(
+    "n", "d_true", "ar_strength", "ma_strength", "p_true", "q_true",
+    "h", "method", "order_selection_method", "window_type", "WIS"
+  )
+
+  if (!all(required_cols %in% names(df))) {
+    stop("Missing required unified WIS columns.", call. = FALSE)
+  }
+
+  if (nrow(df) == 0L || any(!is.finite(df$WIS))) {
+    stop("Unified WIS data must be non-empty and finite.", call. = FALSE)
+  }
+
+  out <- df %>%
+    filter(
+      n == T_show,
+      tolower(window_type) == tolower(window_show)
+    ) %>%
+    mutate(
+      forecast_method = case_when(
+        method == "far" ~ "FARFIMA(1,1,0)",
+        method == "farma" & order_selection_method == "adaptive_ic" ~
+          "Functional IC",
+        method == "farma" & grepl("^cv", order_selection_method) ~ "CV",
+        TRUE ~ NA_character_
+      )
+    )
+
+  if (nrow(out) == 0L || anyNA(out$forecast_method)) {
+    stop("Unknown or missing unified WIS method.", call. = FALSE)
+  }
+
+  out <- out %>%
+    group_by(
+      n, d_true, ar_strength, ma_strength, p_true, q_true, h,
+      forecast_method
+    ) %>%
+    summarise(WIS = mean(WIS), .groups = "drop") %>%
+    pivot_wider(names_from = forecast_method, values_from = WIS)
+
+  required_methods <- c("FARFIMA(1,1,0)", "Functional IC", "CV")
+
+  if (!all(required_methods %in% names(out))) {
+    stop("Missing benchmark, Functional IC, or CV WIS.", call. = FALSE)
+  }
+
+  out <- out %>%
+    mutate(
+      score_ratio_adaptive = `Functional IC` / `FARFIMA(1,1,0)`,
+      score_ratio_cv = CV / `FARFIMA(1,1,0)`
+    ) %>%
+    select(
+      n, d_true, ar_strength, ma_strength, p_true, q_true, h,
+      score_ratio_adaptive, score_ratio_cv
+    ) %>%
+    pivot_longer(
+      cols = c(score_ratio_adaptive, score_ratio_cv),
+      names_to = "order_selection_method",
+      values_to = "score_ratio"
+    ) %>%
+    mutate(
+      order_selection_method = recode(
+        order_selection_method,
+        score_ratio_adaptive = "Functional IC",
+        score_ratio_cv = "CV"
+      ),
+      order_selection_method = factor(
+        order_selection_method,
+        levels = c("Functional IC", "CV")
+      ),
+      model = factor(
+        paste0("(", p_true, ",", q_true, ")"),
+        levels = c("(1,0)", "(0,1)", "(2,0)", "(1,1)")
+      ),
+      d_label = factor(
+        paste0("d==", d_true),
+        levels = paste0("d==", sort(unique(d_true)))
+      ),
+      psi_label = factor(
+        paste0("psi==", ar_strength),
+        levels = paste0("psi==", sort(unique(ar_strength)))
+      ),
+      nu_label = factor(
+        paste0("nu==", ma_strength),
+        levels = paste0("nu==", sort(unique(ma_strength)))
+      ),
+      farma_label = factor(
+        paste0("psi~'='~nu~'='~", ar_strength),
+        levels = paste0(
+          "psi~'='~nu~'='~",
+          sort(unique(ar_strength))
+        )
+      )
+    )
+
+  if (any(!is.finite(out$score_ratio)) || anyNA(out$model)) {
+    stop("Unified WIS ratios and models must be valid.", call. = FALSE)
+  }
+
+  out
+}
+
+unified_wis_ratio_expanding <- prepare_unified_wis_ratio_data(
+  df = unified_wis %>%
+    filter(d_true %in% c(0.2, 0.6, 1, 1.4)),
+  T_show = 1000,
+  window_show = "expanding"
+)
+
+p_unified_wis_ratio_expanding <-
+  combine_four_unified_score_ratio_models_shared_axes(
+    df = unified_wis_ratio_expanding,
+    file_name = "unified_wis_ratio_expanding_2x2.pdf",
+    width = 20,
+    height = 15,
+    y_axis_label = "WIS ratio to FARFIMA(1,1,0)"
+  )
+
+p_unified_wis_ratio_expanding
+```
+
+
+
+#### Table of interval forecasting scores
 
 ```{r}
 benchmark_interval <- unified_forecast_res$interval_summary %>%
@@ -2916,10 +3181,6 @@ cat(latex_table)
 ```
 
 
-
-
 ```{r}
 unified_forecast_res$ratio_by_rep_clean %>% filter(window_type == "expanding", p_true == 2, q_true == 0, ar_strength == 0.8, d_true == 0.4, order_selection_method == "adaptive_ic", n == 500, h == 1, RMSE_ratio < 1.5) %>% pull(RMSE_ratio) %>% mean()
 ```
-
-

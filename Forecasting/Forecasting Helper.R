@@ -10,6 +10,155 @@ interval_score <- function(holdout, lb, ub, alpha) {
 }
 
 
+# Weighted interval score for observation-level forecasts.
+# Columns of lower_mat and upper_mat must follow the order in alpha.
+weighted_interval_score_vec <- function(y,
+                                        median,
+                                        lower_mat,
+                                        upper_mat,
+                                        alpha) {
+  y <- as.numeric(y)
+  median <- as.numeric(median)
+  lower_mat <- as.matrix(lower_mat)
+  upper_mat <- as.matrix(upper_mat)
+  alpha <- as.numeric(alpha)
+
+  n <- length(y)
+  K <- length(alpha)
+
+  if (length(median) != n) {
+    stop("`median` must have the same length as `y`.", call. = FALSE)
+  }
+
+  if (nrow(lower_mat) != n || nrow(upper_mat) != n) {
+    stop("The bound matrices must have one row per observation in `y`.",
+         call. = FALSE)
+  }
+
+  if (ncol(lower_mat) != K || ncol(upper_mat) != K) {
+    stop("The bound matrices must have one column per value in `alpha`.",
+         call. = FALSE)
+  }
+
+  if (K == 0L || any(!is.finite(alpha)) || any(alpha <= 0 | alpha >= 1)) {
+    stop("`alpha` must contain finite values strictly between zero and one.",
+         call. = FALSE)
+  }
+
+  if (anyDuplicated(alpha)) {
+    stop("`alpha` values must be unique.", call. = FALSE)
+  }
+
+  if (any(!is.finite(y)) || any(!is.finite(median)) ||
+      any(!is.finite(lower_mat)) || any(!is.finite(upper_mat))) {
+    stop("WIS inputs must be finite.", call. = FALSE)
+  }
+
+  if (any(lower_mat > upper_mat, na.rm = TRUE)) {
+    stop("Every lower bound must be less than or equal to its upper bound.",
+         call. = FALSE)
+  }
+
+  y_mat <- matrix(y, nrow = n, ncol = K)
+  alpha_mat <- matrix(alpha, nrow = n, ncol = K, byrow = TRUE)
+
+  interval_score_mat <-
+    (upper_mat - lower_mat) +
+    (2 / alpha_mat) * (lower_mat - y_mat) * (y_mat < lower_mat) +
+    (2 / alpha_mat) * (y_mat - upper_mat) * (y_mat > upper_mat)
+
+  (0.5 * abs(y - median) +
+     rowSums((alpha_mat / 2) * interval_score_mat)) /
+    (K + 0.5)
+}
+
+
+# Recover mean WIS from the saved MAE and per-alpha interval-score summaries.
+# This avoids rerunning the forecasting simulations when the alpha levels are
+# unchanged and only an averaged WIS is required for plots or tables.
+make_wis_summary <- function(result) {
+  required_result_components <- c("ratio_summary", "interval_summary")
+
+  if (!all(required_result_components %in% names(result))) {
+    stop("`result` must contain `ratio_summary` and `interval_summary`.",
+         call. = FALSE)
+  }
+
+  if (nrow(result$ratio_summary) == 0L ||
+      nrow(result$interval_summary) == 0L) {
+    stop("WIS summary inputs must be non-empty.", call. = FALSE)
+  }
+
+  id_cols <- c(
+    "scenario_id", "n", "d_true", "ar_strength", "ma_strength",
+    "p_true", "q_true", "window_type", "h"
+  )
+
+  if ("order_selection_method" %in% names(result$ratio_summary)) {
+    id_cols <- append(id_cols, "order_selection_method", after = 7)
+  }
+
+  required_interval_cols <- c(id_cols, "method", "alpha", "Score")
+  required_ratio_cols <- c(id_cols, "MAE_far", "MAE_farma")
+
+  if (!all(required_interval_cols %in% names(result$interval_summary))) {
+    stop("`interval_summary` does not contain all columns required for WIS.",
+         call. = FALSE)
+  }
+
+  if (!all(required_ratio_cols %in% names(result$ratio_summary))) {
+    stop("`ratio_summary` does not contain all columns required for WIS.",
+         call. = FALSE)
+  }
+
+  if (any(!is.finite(result$interval_summary$alpha)) ||
+      any(result$interval_summary$alpha <= 0 |
+            result$interval_summary$alpha >= 1) ||
+      any(!is.finite(result$interval_summary$Score)) ||
+      any(!is.finite(result$ratio_summary$MAE_far)) ||
+      any(!is.finite(result$ratio_summary$MAE_farma))) {
+    stop("WIS summary inputs must be finite and use valid alpha levels.",
+         call. = FALSE)
+  }
+
+  interval_component <- result$interval_summary |>
+    dplyr::group_by(dplyr::across(dplyr::all_of(c(id_cols, "method")))) |>
+    dplyr::summarise(
+      K = dplyr::n_distinct(alpha),
+      alpha_levels = paste(sort(unique(alpha)), collapse = ", "),
+      weighted_interval_component = sum((alpha / 2) * Score),
+      .groups = "drop"
+    )
+
+  mae_component <- result$ratio_summary |>
+    dplyr::select(dplyr::all_of(id_cols), MAE_far, MAE_farma) |>
+    tidyr::pivot_longer(
+      cols = c(MAE_far, MAE_farma),
+      names_to = "method",
+      values_to = "MAE"
+    ) |>
+    dplyr::mutate(
+      method = dplyr::recode(
+        method,
+        MAE_far = "far",
+        MAE_farma = "farma"
+      )
+    )
+
+  out <- interval_component |>
+    dplyr::left_join(mae_component, by = c(id_cols, "method")) |>
+    dplyr::mutate(
+      WIS = (0.5 * MAE + weighted_interval_component) / (K + 0.5)
+    )
+
+  if (any(!is.finite(out$WIS))) {
+    stop("Computed WIS values must be finite.", call. = FALSE)
+  }
+
+  out
+}
+
+
 
 forecast_farma_path <- function(fit, Y_train, h)
 {
