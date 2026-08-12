@@ -5,59 +5,62 @@ compute_bias_LPWN_multi <- function(
     R_short_vec = c(1, 2),
     R_noise = 0,
     B = 100,
-    burn_in = 200
+    burn_in = 200,
+    memory_cov_type = "sample",
+    memory_cov_band_const = 1
 ) {
+  memory_cov_type <- match.arg(
+    memory_cov_type,
+    c("sample", "lrc_RS", "lrc_LRS")
+  )
 
   K <- length(R_short_vec)
 
-  # fractional differencing
-   X_diff <- t(FracDiff(t(X), d = d_current))
+  X_diff <- t(FracDiff(t(X), d = d_current))
 
-    #bootstrap
-   X_bootstrap <- sieve_bootstrap(
-     fun_dat = t(X_diff),
-     ncomp_porder_selection = "CPV_AICC",
-     CPV_percent = 0.95,
-     VAR_type = "none",
-     B = B,
-     burn_in = burn_in
-   )
+  X_bootstrap <- sieve_bootstrap(
+    fun_dat = t(X_diff),
+    ncomp_porder_selection = "CPV_AICC",
+    CPV_percent = 0.95,
+    VAR_type = "none",
+    B = B,
+    burn_in = burn_in
+  )
 
-   # store results
-   d_boot_mat <- matrix(NA, nrow = B, ncol = K)
+  d_boot_mat <- matrix(NA_real_, nrow = B, ncol = K)
 
-   # estimate for each bootstrap sample
-   for (b in 1:B) {
+  for (b in seq_len(B)) {
+    Xb_diff <- X_bootstrap$X_boot[, , b]
 
-     Xb_diff <- X_bootstrap$X_boot[, , b]
+    Xb <- t(FracDiff(t(Xb_diff), d = -d_current))
 
-     Xb <- t(FracDiff(t(Xb_diff), d = -d_current))
+    cov_mat <- get_covariance(
+      Xb,
+      type = memory_cov_type,
+      band_const = memory_cov_band_const
+    )
 
-     Xc <- t(scale(t(Xb), center = TRUE, scale = FALSE))
-     cov_mat <- (Xc %*% t(Xc)) / ncol(Xb)
+    lead <- leading_pc(Xb, cov_mat)
+    scores <- lead$scores
 
-     lead <- leading_pc(Xb, cov_mat)
-     scores <- lead$scores
+    for (k in seq_len(K)) {
+      d_boot_mat[b, k] <- LPWN_general(
+        scores,
+        m_const = m_const,
+        R_short = R_short_vec[k],
+        R_noise = R_noise
+      )
+    }
+  }
 
-     for (k in 1:K) {
-       d_boot_mat[b, k] <- LPWN_general(
-         scores,
-         m_const = m_const,
-         R_short = R_short_vec[k],
-         R_noise = R_noise
-       )
-     }
-   }
+  bias_vec <- colMeans(d_boot_mat, na.rm = TRUE) - d_current
+  sd_vec <- apply(d_boot_mat - d_current, 2, sd, na.rm = TRUE)
 
-   # compute bias
-   bias_vec <- colMeans(d_boot_mat) - d_current
-   sd_vec   <- apply(d_boot_mat - d_current, 2, sd)
-
-   return(list(
-     bias = bias_vec,
-     sd   = sd_vec,
-     boot = d_boot_mat
-   ))
+  list(
+    bias = bias_vec,
+    sd = sd_vec,
+    boot = d_boot_mat
+  )
 }
 
 
@@ -66,11 +69,20 @@ estimate_d_BC_LPWN2 <- function(
     m_const = 0.65,
     R_noise = 0,
     B = 100,
-    burn_in = 200
+    burn_in = 200,
+    memory_cov_type = "sample",
+    memory_cov_band_const = 1
 ) {
+  memory_cov_type <- match.arg(
+    memory_cov_type,
+    c("sample", "lrc_RS", "lrc_LRS")
+  )
 
-  Xc <- t(scale(t(X), center = TRUE, scale = FALSE))
-  cov_mat <- get_covariance(X, type = "sample", band_const = 1)
+  cov_mat <- get_covariance(
+    X,
+    type = memory_cov_type,
+    band_const = memory_cov_band_const
+  )
 
   lead <- leading_pc(X, cov_mat)
   scores <- lead$scores
@@ -89,18 +101,24 @@ estimate_d_BC_LPWN2 <- function(
     R_short_vec = 2,
     R_noise = R_noise,
     B = B,
-    burn_in = burn_in
+    burn_in = burn_in,
+    memory_cov_type = memory_cov_type,
+    memory_cov_band_const = memory_cov_band_const
   )
 
   d_BC_LPWN2 <- d_LPWN2 - out$bias[1]
 
-  return(list(
+  list(
     d_LPWN2 = d_LPWN2,
     d_BC_LPWN2 = d_BC_LPWN2,
     bias_LPWN2 = out$bias[1],
     sd_LPWN2 = out$sd[1],
-    bootstrap_estimates = out$boot[, 1]
-  ))
+    bootstrap_estimates = out$boot[, 1],
+    memory_cov_type = memory_cov_type,
+    memory_cov_band_const = memory_cov_band_const,
+    leading_eigenfunction = lead$psi1,
+    leading_scores = lead$scores
+  )
 }
 
 
