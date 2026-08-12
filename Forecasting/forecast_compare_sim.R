@@ -459,10 +459,6 @@ rolling_split_conformal_original_ecp_compact <- function(X,
     }
   }
 
-  # ----------------------------------------------------------
-  # Pointwise test summaries
-  # ----------------------------------------------------------
-
   conformal_summary_list <- list()
 
   for (m in methods_used)

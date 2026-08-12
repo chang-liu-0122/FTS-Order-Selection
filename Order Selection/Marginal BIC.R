@@ -56,7 +56,9 @@ compute_FT_far <- function(X, p, q, Npc = 1)
 
   T_eff <- ncol(E)
 
-  H <- floor(log(T_eff))
+  # H <- floor(log(T_eff))
+  # H = 30
+  H = 20
 
   F_T <- temporal_dependence(E, H)
 

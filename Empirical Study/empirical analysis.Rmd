@@ -47,173 +47,122 @@ source("Forecasting/unified_compare_sim.R")
 ```
 
 
+# Slovakia is good
+
 ```{r}
-data_yield_full = read.csv("yield_curves full.csv")
+library(readr)
 
-data_yield_full = data_yield_full %>% 
-                  dplyr::select(-"X") %>% 
-                  filter(ZC025YR != " na")  %>% mutate(
-                    Date = as.Date(Date),
-                  across(-Date, as.numeric)
-                  )
+fer <- read_rds("demog_list_asfr.rds")
 
-data_yield_full = as.matrix(data_yield_full[,2:ncol(data_yield_full)])
+fer_swe_raw <- fer$FRATNP$raw$rate$FRATNP_ASFR
+fer_swe_smooth <- fer$FRATNP$smooth$rate$FRATNP_ASFR
 
-T_sample=nrow(data_yield_full)
-TTT=T_sample
+fer_swe_smooth[is.na(fer_swe_smooth)] = 0
 
-data_yield_full=t(data_yield_full)
+fer_swe_raw_change <- preprocess_fertility_change(
+  fer_swe_raw
+)
 
+
+fer_swe_smooth_change <- preprocess_fertility_change(
+  fer_swe_smooth
+)
 
 ```
 
+
+```{r}
+preprocess_fertility_change <- function(F) {
+  # Input and output:
+  #   rows    = ages
+  #   columns = years
+
+  F <- as.matrix(F)
+  storage.mode(F) <- "double"
+
+  if (ncol(F) < 2L) {
+    stop("At least two years are required.")
+  }
+
+  # Do not interpolate genuine missing observations
+  if (any(!is.finite(F))) {
+    bad <- which(!is.finite(F), arr.ind = TRUE)
+
+    print(data.frame(
+      age = if (is.null(rownames(F))) {
+        bad[, "row"]
+      } else {
+        rownames(F)[bad[, "row"]]
+      },
+      year = if (is.null(colnames(F))) {
+        bad[, "col"]
+      } else {
+        colnames(F)[bad[, "col"]]
+      },
+      value = F[bad],
+      row.names = NULL
+    ))
+
+    stop(
+      "The input contains NA, NaN, or Inf values. ",
+      "No interpolation was performed."
+    )
+  }
+
+  previous <- F[, -ncol(F), drop = FALSE]
+  current  <- F[, -1L,       drop = FALSE]
+
+  numerator   <- 2 * (previous - current)
+  denominator <- previous + current
+
+  # Apply the paper's transformation where the denominator is positive
+  change <- numerator / denominator
+
+  # If both rates are zero, define the observed change as zero
+  both_zero <- previous == 0 & current == 0
+  change[both_zero] <- 0
+
+  rownames(change) <- rownames(F)
+
+  if (!is.null(colnames(F))) {
+    colnames(change) <- colnames(F)[-1L]
+  }
+
+  if (any(!is.finite(change))) {
+    stop("The transformation unexpectedly produced non-finite values.")
+  }
+
+  attr(change, "transformation") <-
+    "2 * (previous - current) / (previous + current)"
+
+  attr(change, "zero_zero_rule") <-
+    "When previous = current = 0, annual change is defined as 0."
+
+  change
+}
+```
 
 
 
 ```{r}
 plot(
-  fts(1:nrow(data_yield_full), data_yield_full),
+  fts(1:nrow(fer_swe_smooth_change), fer_swe_smooth_change),
   xlab = "Age",
   ylab = "Male log mortality rate"
 )
 ```
 
 
-```{r}
-screen_order_selection_compact <- function(X,
-                                           train_ratio = 0.6,
-                                           p_max = 5,
-                                           q_max = 5,
-                                           Npc = 1,
-                                           m_const = 0.65,
-                                           R_noise = 0,
-                                           B = 100,
-                                           burn_in = 200,
-                                           fracdiff_trim = 100,
-                                           seed = 1)
-{
-  X <- as.matrix(X)
-
-  if (any(!is.finite(X)))
-  {
-    stop("X contains NA, NaN or Inf values.")
-  }
-
-  T <- ncol(X)
-
-  train_end <- floor(T * train_ratio)
-
-  if (train_end <= fracdiff_trim)
-  {
-    stop("The initial training sample is too short after applying fracdiff_trim.")
-  }
-
-  X_initial_train <- X[, 1:train_end, drop = FALSE]
-
-  set.seed(seed)
-
-  d_hat <- estimate_d_BC_LPWN2(
-    X_initial_train,
-    m_const = m_const,
-    R_noise = R_noise,
-    B = B,
-    burn_in = burn_in
-  )$d_BC_LPWN2
-
-  d_hat <- as.numeric(d_hat)
-
-  if (length(d_hat) != 1 ||
-      !is.finite(d_hat))
-  {
-    stop("Estimated d is not a single finite value.")
-  }
-
-  if (d_hat == 0)
-  {
-    X_diff_initial_train <- X_initial_train
-  } else {
-    X_diff_initial_train <- FracDiff(t(X_initial_train), d_hat) %>%
-      t()
-  }
-
-  if (any(!is.finite(X_diff_initial_train)))
-  {
-    stop("Fractionally differenced training curves contain NA or Inf.")
-  }
-
-  if (d_hat == 0)
-  {
-    X_diff_for_order_selection <- X_diff_initial_train
-  } else {
-    X_diff_for_order_selection <-
-      X_diff_initial_train[
-        ,
-        (fracdiff_trim + 1):ncol(X_diff_initial_train),
-        drop = FALSE
-      ]
-  }
-
-  order_out <- select_order_far_full(
-    X = X_diff_for_order_selection,
-    p_max = p_max,
-    q_max = q_max,
-    Npc = Npc
-  )
-
-  p_est <- as.integer(order_out$p_hat)
-
-  q_est <- as.integer(order_out$q_hat)
-
-  if (length(p_est) != 1 ||
-      length(q_est) != 1 ||
-      !is.finite(p_est) ||
-      !is.finite(q_est))
-  {
-    stop("Order selection did not return valid values for p_est and q_est.")
-  }
-
-  list(
-    model_summary =
-      tibble::tibble(
-        T = T,
-        train_end = train_end,
-        d_hat = d_hat,
-        p_est = p_est,
-        q_est = q_est,
-        total_order = p_est + q_est,
-        Npc = Npc,
-        fracdiff_trim = fracdiff_trim
-      ),
-    order_selection_detail = order_out
-  )
-}
-```
-
-
-```{r}
-screen_canada_2021_2024 <- screen_order_selection_compact(
-  X = data_yield_full,
-  train_ratio = 0.6,
-  p_max = 5,
-  q_max = 5,
-  Npc = 1,
-  B = 199,
-  fracdiff_trim = 100,
-  seed = 111
-)
-
-screen_canada_2021_2024$model_summary
-```
 
 
 
 ```{r}
-yield_result <- rolling_forecasting_pipeline_compact(
-  X = data_yield_full,
+yield_result <- rolling_forecasting_pipeline_compact_order_method(
+  X = fer_swe_smooth_change,
   h_max = 10,
   train_ratio = 0.6,
   valid_ratio = 0.2,
-  alpha_set = c(0.2, 0.05),
+  alpha_set = c(0.2),
   window_types = c(
     "expanding"
   ),
@@ -222,9 +171,11 @@ yield_result <- rolling_forecasting_pipeline_compact(
   Npc = 1,
   B = 399,
   far_pve = 0.95,
-  fracdiff_trim = 200,
+  fracdiff_trim = 20,
   seed = 123,
-  far_benchmark_d = 1
+  far_benchmark_d = 1,
+  order_selection_method = c("adaptive_ic"),
+  memory_cov_type = "sample",
 )
 
 
@@ -233,11 +184,288 @@ extract_real_data_metrics(yield_result)
 
 
 
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+
+plot_10step_test_forecast <- function(
+    result,
+    X,
+    window = "expanding",
+    order_method = "adaptive_ic",
+    h_plot = 10
+) {
+  X <- as.matrix(X)
+
+  detail <- result$error_detail %>%
+    filter(
+      window_type == window,
+      order_selection_method == order_method,
+      method %in% c("farma", "far")
+    ) %>%
+    mutate(
+      available_horizons = map_int(error, ncol)
+    )
+
+  # Find test origins for which both methods produced all 10 horizons
+  eligible_origins <- detail %>%
+  dplyr::filter(available_horizons >= h_plot) %>%
+  dplyr::distinct(t0, method) %>%
+  dplyr::group_by(t0) %>%
+  dplyr::summarise(
+    n_methods = dplyr::n_distinct(method),
+    .groups = "drop"
+  ) %>%
+  dplyr::filter(n_methods == 2L)
+
+  if (nrow(eligible_origins) == 0L) {
+    stop(
+      "No test origin contains ",
+      h_plot,
+      " successful forecasts from both methods."
+    )
+  }
+
+  # Latest origin with a complete 10-step forecast:
+  # this displays the final 10 observed test curves
+  selected_t0 <- max(eligible_origins$t0)
+
+  selected <- detail %>%
+    filter(t0 == selected_t0)
+
+  proposed_row <- selected %>%
+    filter(method == "farma") %>%
+    slice(1)
+
+  benchmark_row <- selected %>%
+    filter(method == "far") %>%
+    slice(1)
+
+  if (nrow(proposed_row) != 1L || nrow(benchmark_row) != 1L) {
+    stop("Could not uniquely identify both forecasting methods.")
+  }
+
+  target_indices <- selected_t0 + seq_len(h_plot)
+
+  observed <- X[
+    ,
+    target_indices,
+    drop = FALSE
+  ]
+
+  proposed_error <- proposed_row$error[[1]][
+    ,
+    seq_len(h_plot),
+    drop = FALSE
+  ]
+
+  benchmark_error <- benchmark_row$error[[1]][
+    ,
+    seq_len(h_plot),
+    drop = FALSE
+  ]
+
+  # The pipeline defines testing error as forecast - observed
+  proposed_forecast <- observed + proposed_error
+  benchmark_forecast <- observed + benchmark_error
+
+  p_hat <- proposed_row$p_est[[1]]
+  q_hat <- proposed_row$q_est[[1]]
+  d_hat <- proposed_row$d_used[[1]]
+
+  proposed_label <- sprintf(
+    "Proposed FARFIMA(%d, %.2f, %d)",
+    p_hat,
+    d_hat,
+    q_hat
+  )
+
+  benchmark_label <- "Benchmark FARFIMA(1, 1, 0)"
+
+  target_years <- if (!is.null(colnames(X))) {
+    colnames(X)[target_indices]
+  } else {
+    as.character(target_indices)
+  }
+
+  origin_year <- if (!is.null(colnames(X))) {
+    colnames(X)[selected_t0]
+  } else {
+    as.character(selected_t0)
+  }
+
+  age_labels <- if (!is.null(rownames(X))) {
+    rownames(X)
+  } else {
+    as.character(seq_len(nrow(X)))
+  }
+
+  matrix_to_long <- function(M, series_name) {
+    data.frame(
+      age_index = rep(
+        seq_len(nrow(M)),
+        times = ncol(M)
+      ),
+      horizon = rep(
+        seq_len(ncol(M)),
+        each = nrow(M)
+      ),
+      value = as.vector(M),
+      series = series_name
+    )
+  }
+
+  plot_data <- bind_rows(
+    matrix_to_long(observed, "Observed"),
+    matrix_to_long(proposed_forecast, proposed_label),
+    matrix_to_long(benchmark_forecast, benchmark_label)
+  ) %>%
+    mutate(
+      target_year = target_years[horizon],
+      panel = paste0(
+        "h = ",
+        horizon,
+        "  |  ",
+        target_year
+      ),
+      series = factor(
+        series,
+        levels = c(
+          "Observed",
+          proposed_label,
+          benchmark_label
+        )
+      )
+    )
+
+  colours <- setNames(
+    c(
+      "black",
+      "#D62728",
+      "#2F5597"
+    ),
+    c(
+      "Observed",
+      proposed_label,
+      benchmark_label
+    )
+  )
+
+  line_types <- setNames(
+    c(
+      "solid",
+      "solid",
+      "dashed"
+    ),
+    c(
+      "Observed",
+      proposed_label,
+      benchmark_label
+    )
+  )
+
+  age_breaks <- unique(round(
+    seq(
+      1,
+      nrow(X),
+      length.out = 6
+    )
+  ))
+
+  forecast_plot <- ggplot(
+    plot_data,
+    aes(
+      x = age_index,
+      y = value,
+      colour = series,
+      linetype = series
+    )
+  ) +
+    geom_line(linewidth = 0.8) +
+    facet_wrap(
+      ~panel,
+      ncol = 5,
+      scales = "fixed"
+    ) +
+    scale_colour_manual(values = colours) +
+    scale_linetype_manual(values = line_types) +
+    scale_x_continuous(
+      breaks = age_breaks,
+      labels = age_labels[age_breaks]
+    ) +
+    labs(
+      title = "Ten-step forecasts for Slovakian fertility changes",
+      subtitle = paste0(
+        "Latest complete test origin: ",
+        origin_year
+      ),
+      x = "Age",
+      y = "Annual fertility-rate change",
+      colour = NULL,
+      linetype = NULL
+    ) +
+    theme_classic(base_size = 13) +
+    theme(
+      legend.position = "top",
+      legend.justification = "center",
+      strip.background = element_rect(
+        fill = "grey95",
+        colour = "grey60"
+      ),
+      strip.text = element_text(face = "bold"),
+      panel.spacing = grid::unit(0.8, "lines")
+    )
+
+  list(
+    plot = forecast_plot,
+    data = plot_data,
+    origin_index = selected_t0,
+    origin_year = origin_year,
+    target_years = target_years,
+    proposed_forecast = proposed_forecast,
+    benchmark_forecast = benchmark_forecast,
+    observed = observed
+  )
+}
+```
+
+
+```{r}
+forecast_visualisation <- plot_10step_test_forecast(
+  result = yield_result,
+  X = fer_swe_smooth_change,
+  window = "expanding",
+  order_method = "adaptive_ic",
+  h_plot = 10
+)
+
+forecast_visualisation$plot
+```
+
+
+
+
+
+
+
+
+
+
 ```{r}
 library(demography)
 
-Swe_mortality <- read.demogdata("Mx_1x1_sweden.txt", type="mortality", label="Sweden")
-Swe_mortality = Swe_mortality %>% extract.ages(ages = 1:90)
+Swe_mortality <- read.demogdata(
+  file = "Mx_1x1_sweden.txt",
+  popfile = "Exposures_1x1.txt",
+  type = "mortality",
+  label = "Sweden"
+)
+
+Swe_mortality = Swe_mortality %>% extract.ages(ages = 0:90, combine.upper = TRUE)
 
 x_mat_male = Swe_mortality$rate$male 
 x_mat_female = Swe_mortality$rate$female 
@@ -248,11 +476,9 @@ x_mat_female[is.na(x_mat_female)] <- 10^-4
 x_mat_male[x_mat_male <= 0] <- 10^-4
 x_mat_female[x_mat_female <= 0] <- 10^-4
 
-# Find max age to look at
-x_mat_male = x_mat_male[1:90, ] %>% log()
-x_mat_female = x_mat_female[1:90, ] %>% log()
-
-
+# log
+x_mat_male = x_mat_male %>% log()
+x_mat_female = x_mat_female %>% log()
 
 ```
 
@@ -331,12 +557,61 @@ x_mat_female_lat[x_mat_female_lat <= 0] <- 10^-4
 x_mat_male_lat = x_mat_male_lat[1:90, ] %>% log()
 x_mat_female_lat = x_mat_female_lat[1:90, ] %>% log()
 ```
+```{r}
+require(demography)
+require(ftsa)
+require(imputeTS)
+require(ggplot2)
+require(dplyr)
+require(tidyr)
+require(stringr)
+require(vars)
+require(doMC)
+
+AU_demo = extract.ages(read.demogdata(file = "Mx_1x1_au.txt", popfile = "Exposures_1x1_AU.txt", type = "mortality", label = "AU"), 0:100)
+
+# set those rates > 1 to 1
+
+AU_demo$rate$female = replace(AU_demo$rate$female, which(AU_demo$rate$female > 1), NA)
+AU_demo$rate$male   = replace(AU_demo$rate$male,   which(AU_demo$rate$male > 1),   NA)
+
+####################
+## smooth demogdata
+####################
+
+# AU_demo_smooth <- smooth.demogdata(AU_demo)
+
+# set those 0 values to NA
+
+AU_demo$rate$female = replace(AU_demo$rate$female, which(AU_demo$rate$female == 0), NA)
+AU_demo$rate$male   = replace(AU_demo$rate$male,   which(AU_demo$rate$male == 0), NA)
+
+# na.interp those NAs
+
+n_age = nrow(AU_demo$rate$female)  # 96
+n_year = ncol(AU_demo$rate$female) # 272
+
+# linear interpolation for each age over years
+
+AU_demo_rate_female = AU_demo_rate_male = matrix(NA, n_age, n_year)
+for(ik in 1:n_age)
+{
+    AU_demo_rate_female[ik,] = na_interpolation(AU_demo$rate$female[ik,])
+    AU_demo_rate_male[ik,]   = na_interpolation(AU_demo$rate$male[ik,])
+    rm(ik)
+}
+
+AU_demo_female_log = log(AU_demo_rate_female, base = 10)
+AU_demo_male_log   = log(AU_demo_rate_male, base = 10)
+colnames(AU_demo_female_log) = colnames(AU_demo_male_log) = AU_demo$year
+rownames(AU_demo_female_log) = rownames(AU_demo_male_log) = AU_demo$age
+```
 
 
 ```{r}
 mortality_result <- rolling_forecasting_pipeline_empirical(
-  X = x_mat_female_nor,
-  h_max = 10,
+  X = AU_demo_male_log,
+  h_max = 20,
   train_ratio = 0.6,
   valid_ratio = 0.2,
   alpha_set = c(0.2, 0.05),
@@ -354,8 +629,10 @@ mortality_result <- rolling_forecasting_pipeline_empirical(
   far_benchmark_d = 1
 )
 
-extract_real_data_metrics(mortality_result)
+a = extract_real_data_metrics(mortality_result)
 
+
+a$interval_summary %>% filter(method == "far", alpha == 0.2, window_type == "expanding")
 ```
 
 ```{r}
@@ -3133,7 +3410,7 @@ X_elect_weekly_diff <- difference_weekly(
 
 
 ```{r}
-year_use <- 2000
+year_use <- 2025
 
 idx_year <- which(
   format(dates_elect, "%Y") == as.character(year_use)
@@ -3450,4 +3727,991 @@ summary_res$bias_filtered <- summary_res$d_filtered - summary_res$d_true
 summary_res
 ```
 
+
+```{r}
+###################################################
+# Nonstationary functional time series forecasting
+###################################################
+
+###############################
+## load and install R package
+###############################
+
+require(demography)
+require(ftsa)
+require(imputeTS)
+require(ggplot2)
+require(dplyr)
+require(tidyr)
+require(stringr)
+require(vars)
+require(doMC)
+
+#############
+## read data
+#############
+
+SWE_training_year = 1:163
+SWE_validation_year = 164:218
+SWE_test_year = 219:272
+
+SWE_demo = extract.ages(read.demogdata(file = "Mx_1x1_sweden.txt", popfile = "Exposures_1x1.txt", type = "mortality", label = "SWE"), 0:95)
+
+# set those rates > 1 to 1
+
+SWE_demo$rate$female = replace(SWE_demo$rate$female, which(SWE_demo$rate$female > 1), NA)
+SWE_demo$rate$male   = replace(SWE_demo$rate$male,   which(SWE_demo$rate$male > 1),   NA)
+
+####################
+## smooth demogdata
+####################
+
+# SWE_demo_smooth <- smooth.demogdata(SWE_demo)
+
+# set those 0 values to NA
+
+SWE_demo$rate$female = replace(SWE_demo$rate$female, which(SWE_demo$rate$female == 0), NA)
+SWE_demo$rate$male   = replace(SWE_demo$rate$male,   which(SWE_demo$rate$male == 0), NA)
+
+# na.interp those NAs
+
+n_age = nrow(SWE_demo$rate$female)  # 96
+n_year = ncol(SWE_demo$rate$female) # 272
+
+# linear interpolation for each age over years
+
+SWE_demo_rate_female = SWE_demo_rate_male = matrix(NA, n_age, n_year)
+for(ik in 1:n_age)
+{
+    SWE_demo_rate_female[ik,] = na_interpolation(SWE_demo$rate$female[ik,])
+    SWE_demo_rate_male[ik,]   = na_interpolation(SWE_demo$rate$male[ik,])
+    rm(ik)
+}
+
+SWE_demo_female_log = log(SWE_demo_rate_female, base = 10)
+SWE_demo_male_log   = log(SWE_demo_rate_male, base = 10)
+colnames(SWE_demo_female_log) = colnames(SWE_demo_male_log) = SWE_demo$year
+rownames(SWE_demo_female_log) = rownames(SWE_demo_male_log) = SWE_demo$age
+
+# check
+
+range(SWE_demo_rate_female) # 1.6e-5 0.827922
+range(SWE_demo_rate_male)   # 1.5e-5 0.9797953
+which(!is.finite(SWE_demo_female_log)) # NA
+which(!is.finite(SWE_demo_male_log))   # NA
+
+########################################################
+# Geometrically decaying weighted (long-run covariance)
+# The procedure of Isreal Martinez
+########################################################
+
+# eigenvalue ratio criterion
+
+select_K <- function(tau, eigenvalue)
+{
+    k_max = length(eigenvalue)
+    k_all = rep(0, k_max-1)
+    for(k in 1:(k_max-1))
+    {
+      k_all[k] = (eigenvalue[k+1]/eigenvalue[k])*ifelse(eigenvalue[k]/eigenvalue[1] > tau, 1, 0) + ifelse(eigenvalue[k]/eigenvalue[1] < tau, 1, 0)
+    }
+    K_hat = which.min(k_all)
+    return(K_hat)
+}
+
+
+GW_LRC_nonstationary <- function(beta, dat, fh, fmethod = c("ets", "arima"))
+{
+    fmethod = match.arg(fmethod)
+    n = ncol(dat)
+    n_dim = nrow(dat)
+    
+    # equal weight or geometrically decaying weight
+    
+    if(is.null(beta))
+    {
+        q = rep(1/n, n)
+    }
+    else
+    {
+        q = beta * (1 - beta)^(0:(n - 1))
+    }
+    
+    # compute mean
+    
+    # my = apply(dat, 1, weighted.mean, w = rev(q))
+    my = rowMeans(dat)
+    
+    # de-center data by subtracting the mean term
+    
+    new_dat = sweep(x = t(dat), MARGIN = 2, STATS = my, FUN = "-")
+    
+    # first-order differencing of de-centered data
+    
+    new_dat_diff = matrix(NA, (n-1), nrow(dat))
+    for(ik in 1:(n-1))
+    {
+        new_dat_diff[ik,] = new_dat[(ik+1),] - new_dat[ik,]
+    }
+    
+    # equal weighted or geometrically decaying weighted de-centered data
+    
+    wq = diag(rev(q)[-n])
+    new_dat2 = wq %*% new_dat_diff * (n-1)
+    
+    # compute long-run covariance for differenced data
+    
+    LRC_est = long_run_covariance_estimation(dat = t(new_dat2))
+    eigen_decomp = eigen(LRC_est, symmetric = TRUE)
+    
+    # determine ncomp by the ratio method
+    
+    lambda_val = eigen_decomp$values[which(eigen_decomp$values > 0)]
+    ncomp = select_K(tau = 1/log(max(lambda_val[1], length(lambda_val))), eigenvalue = lambda_val)
+    rm(lambda_val); rm(LRC_est)
+    
+    # compute the basis function and their scores
+    
+    LRC_basis = matrix(eigen_decomp$vectors[,1:ncomp], ncol = ncomp)
+    LRC_score = new_dat %*% LRC_basis
+    
+    LRC_recon = LRC_basis %*% t(LRC_score)
+    LRC_resi = t(new_dat) - LRC_recon
+    
+    LRC_score_fore = matrix(NA, fh, ncomp)
+    if(fmethod == "ets")
+    {
+        for(ik in 1:ncomp)
+        {
+            LRC_score_fore[,ik] = forecast(ets(as.numeric(LRC_score[,ik])), h = fh)$mean
+        }
+    }
+    else if(fmethod == "arima")
+    {
+        for(ik in 1:ncomp)
+        {
+            LRC_score_fore[,ik] = forecast(auto.arima(as.numeric(LRC_score[,ik])), h = fh)$mean
+        }
+    }
+    else
+    {
+        warning("Please choose a correct forecasting method.")
+    }
+    
+    # compute long-run covariance for the residual functions
+    
+    LRC_resi_est = long_run_covariance_estimation(dat = LRC_resi)
+    eigen_decomp_resi = eigen(LRC_resi_est, symmetric = TRUE)
+    
+    # determine ncomp by the ratio method
+    
+    lambda_val = eigen_decomp_resi$values[which(eigen_decomp_resi$values > 0)]
+    ncomp_resi = select_K(tau = 1/log(max(lambda_val[1], length(lambda_val))), eigenvalue = lambda_val)
+    rm(lambda_val); rm(LRC_resi_est)
+    
+    # compute the additional PCs and their scores
+    
+    LRC_resi_basis = as.matrix(eigen_decomp_resi$vectors[,1:ncomp_resi])
+    LRC_resi_score = new_dat %*% LRC_resi_basis
+    
+    LRC_resi_score_fore = matrix(NA, fh, ncomp_resi)
+    if(fmethod == "ets")
+    {
+        for(ik in 1:ncomp_resi)
+        {
+            LRC_resi_score_fore[,ik] = forecast(ets(as.numeric(LRC_resi_score[,ik])), h = fh)$mean
+        }
+    }
+    else if(fmethod == "arima")
+    {
+        for(ik in 1:ncomp_resi)
+        {
+            LRC_resi_score_fore[,ik] = forecast(auto.arima(as.numeric(LRC_resi_score[,ik])), h = fh)$mean
+        }
+    }
+    else
+    {
+        warning("Please choose a correct forecasting method.")
+    }
+    
+    LRC_fore_curve = LRC_basis %*% matrix(LRC_score_fore, nrow = ncomp) + LRC_resi_basis %*% matrix(LRC_resi_score_fore, nrow = ncomp_resi)
+    LRC_fore_curve_add_mean = LRC_fore_curve + matrix(rep(my, fh),  length(my), fh, byrow = FALSE)
+    return(LRC_fore_curve_add_mean[,fh])
+}
+
+############################################################
+# Selection of the optimal parameter for point forecasts
+# beta_val: beta parameter
+# criterion: "LRC_nonstationary"
+# data: data set
+# horizon: forecast horizon
+# validation_year: year for validation
+# err: forecast error
+# forecasting_method: Forecasting_method = "ETS" or "ARIMA"
+############################################################
+
+parameter_optim <- function(beta_val, data, horizon, validation_year, err, forecasting_method)
+{
+    grid = nrow(data)
+    n_validation_year = length(validation_year)
+    validation_fore = matrix(NA, grid, (n_validation_year + 1 - horizon))
+    for(iwk in 1:(n_validation_year + 1 - horizon))
+    {
+        validation_fore[,iwk] = GW_LRC_nonstationary(beta = beta_val, dat = data[,1:(min(validation_year) - 2 + iwk)],
+                                                     fh = horizon, fmethod = forecasting_method)
+    }
+    if(err == "RMSPE")
+    {
+        err = ftsa:::rmspe(forecast = validation_fore, true = data[,(min(validation_year) + horizon - 1):max(validation_year)])
+    }
+    else if(err == "MAPE")
+    {
+        err = ftsa:::mape(forecast = validation_fore, true = data[,(min(validation_year) + horizon - 1):max(validation_year)])
+    }
+    else
+    {
+        warning("error is not correctly specified.")
+    }
+    return(err)
+}
+
+
+### RMSPE
+
+## female
+
+# ETS 
+
+optim_mat_RMSPE_SWE_female_LRC_nonstationary = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim, lower = 0, upper = 1,
+                   data = SWE_demo_female_log, horizon = iwjk, 
+                   validation_year = SWE_validation_year, err = "RMSPE", forecasting_method = "ets")
+    optim_mat_RMSPE_SWE_female_LRC_nonstationary[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+
+# ARIMA
+
+optim_mat_RMSPE_SWE_female_LRC_nonstationary_ARIMA = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim, lower = 0, upper = 1,
+                   data = SWE_demo_female_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "RMSPE", forecasting_method = "arima")
+    optim_mat_RMSPE_SWE_female_LRC_nonstationary_ARIMA[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+
+## male
+
+# ETS
+
+optim_mat_RMSPE_SWE_male_LRC_nonstationary = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim, lower = 0, upper = 1,
+                   data = SWE_demo_male_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "RMSPE", forecasting_method = "ets")
+    optim_mat_RMSPE_SWE_male_LRC_nonstationary[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+
+# ARIMA
+
+optim_mat_RMSPE_SWE_male_LRC_nonstationary_ARIMA = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim, lower = 0, upper = 1,
+                   data = SWE_demo_male_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "RMSPE", forecasting_method = "arima")
+    optim_mat_RMSPE_SWE_male_LRC_nonstationary_ARIMA[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+
+
+### MAPE
+
+## female
+
+# ETS
+
+optim_mat_MAPE_SWE_female_LRC_nonstationary = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim, lower = 0, upper = 1,
+                   data = SWE_demo_female_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "MAPE", forecasting_method = "ets")
+    optim_mat_MAPE_SWE_female_LRC_nonstationary[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+
+# ARIMA
+
+optim_mat_MAPE_SWE_female_LRC_nonstationary_ARIMA = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim, lower = 0, upper = 1,
+                   data = SWE_demo_female_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "MAPE", forecasting_method = "arima")
+    optim_mat_MAPE_SWE_female_LRC_nonstationary_ARIMA[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}  
+
+## male
+
+# ETS
+
+optim_mat_MAPE_SWE_male_LRC_nonstationary = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim, lower = 0, upper = 1,
+                   data = SWE_demo_male_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "MAPE", forecasting_method = "ets")
+    optim_mat_MAPE_SWE_male_LRC_nonstationary[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+
+# ARIMA
+
+optim_mat_MAPE_SWE_male_LRC_nonstationary_ARIMA = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim, lower = 0, upper = 1,
+                   data = SWE_demo_male_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "MAPE", forecasting_method = "arima")
+    optim_mat_MAPE_SWE_male_LRC_nonstationary_ARIMA[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+
+
+
+############################################################
+# Selection of the optimal parameter for interval forecasts
+# beta_val: beta parameter
+# data: data set
+# horizon: forecast horizon
+# validation_year: year for validation
+# err: forecast error
+# no_boot: number of bootstrap samples
+# PI_level: nominal coverage probability
+# forecasting_method: Forecasting_method = "ETS" or "ARIMA"
+############################################################
+
+parameter_optim_interval <- function(beta_val, data, horizon, validation_year, err, no_boot, 
+                                     PI_level, forecasting_method)
+{
+    grid = nrow(data)
+    n_validation_year = length(validation_year)
+    test_fore_lb = test_fore_ub = matrix(NA, grid, (n_validation_year + 1 - horizon))
+    for(iwk in 1:(n_validation_year + 1 - horizon))
+    {
+        dum = GW_LRC_nonstationary_boot(beta = beta_val, dat = data[,1:(min(validation_year) - 2 + iwk)], 
+                                        fh = horizon, B = no_boot, level = PI_level, fmethod = forecasting_method)
+        test_fore_lb[,iwk] = dum$lb[,horizon]
+        test_fore_ub[,iwk] = dum$ub[,horizon]
+        rm(iwk); rm(dum)
+    }
+    rownames(test_fore_lb) = rownames(test_fore_ub) = 0:(grid - 1)
+    dum = interval_score(holdout = data[,(min(validation_year) + horizon - 1):max(validation_year)], 
+                         lb = test_fore_lb, ub = test_fore_ub, alpha = (100 - PI_level)/100)
+    if(err == "CPD")
+    {
+        return(dum[3])
+    }
+    else if(err == "score")
+    {
+        return(dum[1])
+    }
+    else
+    {
+        warning("err should be interval score or CPD.")
+    }
+}
+
+# ETS
+
+optim_mat_score_SWE_female_ETS = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim_interval, lower = 0, upper = 1, 
+                   data = SWE_demo_female_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "score", no_boot = 1000, PI_level = 80,
+                   forecasting_method = "ets")
+    optim_mat_score_SWE_female_ETS[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+rownames(optim_mat_score_SWE_female_ETS) = 1:30
+colnames(optim_mat_score_SWE_female_ETS) = c("Parameter", "Objective")
+
+# ARIMA
+
+optim_mat_score_SWE_female_ARIMA = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim_interval, lower = 0, upper = 1, 
+                   data = SWE_demo_female_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "score", no_boot = 1000, PI_level = 80,
+                   forecasting_method = "arima")
+    optim_mat_score_SWE_female_ARIMA[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+rownames(optim_mat_score_SWE_female_ARIMA) = 1:30
+colnames(optim_mat_score_SWE_female_ARIMA) = c("Parameter", "Objective")
+
+# ETS
+
+optim_mat_score_SWE_male_ETS = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim_interval, lower = 0, upper = 1, 
+                   data = SWE_demo_male_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "score", no_boot = 1000, PI_level = 80,
+                   forecasting_method = "ets")
+    optim_mat_score_SWE_male_ETS[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+rownames(optim_mat_score_SWE_male_ETS) = 1:30
+colnames(optim_mat_score_SWE_male_ETS) = c("Parameter", "Objective")
+
+# ARIMA
+
+optim_mat_score_SWE_male_ARIMA = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim_interval, lower = 0, upper = 1, 
+                   data = SWE_demo_male_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "score", no_boot = 1000, PI_level = 80,
+                   forecasting_method = "arima")
+    optim_mat_score_SWE_male_ARIMA[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+rownames(optim_mat_score_SWE_male_ARIMA) = 1:30
+colnames(optim_mat_score_SWE_male_ARIMA) = c("Parameter", "Objective")
+
+######
+# CPD
+######
+
+## female
+
+# ETS
+
+optim_mat_CPD_SWE_female_ETS = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim_interval, lower = 0, upper = 1,
+                   data = SWE_demo_female_log, horizon = iwjk, 
+                   validation_year = SWE_validation_year, err = "CPD", no_boot = 1000, PI_level = 80, 
+                   forecasting_method = "ets")
+    optim_mat_CPD_SWE_female_ETS[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+rownames(optim_mat_CPD_SWE_female_ETS) = 1:30
+colnames(optim_mat_CPD_SWE_female_ETS) = c("Parameter", "Objective")
+
+# ARIMA
+
+optim_mat_CPD_SWE_female_ARIMA = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim_interval, lower = 0, upper = 1, 
+                   data = SWE_demo_female_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "CPD", no_boot = 1000, PI_level = 80,
+                   forecasting_method = "arima")
+    optim_mat_CPD_SWE_female_ARIMA[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+rownames(optim_mat_CPD_SWE_female_ARIMA) = 1:30
+colnames(optim_mat_CPD_SWE_female_ARIMA) = c("Parameter", "Objective")
+
+## male
+
+# ETS
+
+optim_mat_CPD_SWE_male_ETS = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim_interval, lower = 0, upper = 1,
+                   data = SWE_demo_male_log, horizon = iwjk, 
+                   validation_year = SWE_validation_year, err = "CPD", no_boot = 1000, PI_level = 80, 
+                   forecasting_method = "ets")
+    optim_mat_CPD_SWE_male_ETS[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+rownames(optim_mat_CPD_SWE_male_ETS) = 1:30
+colnames(optim_mat_CPD_SWE_male_ETS) = c("Parameter", "Objective")
+
+# ARIMA
+
+optim_mat_CPD_SWE_male_ARIMA = matrix(NA, 30, 2)
+for(iwjk in 1:30)
+{
+    dum = optimize(f = parameter_optim_interval, lower = 0, upper = 1, 
+                   data = SWE_demo_male_log, horizon = iwjk,
+                   validation_year = SWE_validation_year, err = "CPD", no_boot = 1000, PI_level = 80,
+                   forecasting_method = "arima")
+    optim_mat_CPD_SWE_male_ARIMA[iwjk,] = c(dum$minimum, dum$objective)
+    print(iwjk); rm(iwjk); rm(dum)
+}
+rownames(optim_mat_CPD_SWE_male_ARIMA) = 1:30
+colnames(optim_mat_CPD_SWE_male_ARIMA) = c("Parameter", "Objective")
+
+#####################
+#####################
+# Empirical Analysis
+#####################
+#####################
+
+########################################
+# Tuning parameters
+# training_year: 80% of the full data
+# validation_year: 10% of the full data
+# test_year: 10% of the full data
+########################################
+
+#################
+# Testing sample
+#################
+
+# beta_selected: selected tuning parameter
+# criterion: dynamic, two-stage dynamic, static FPCA
+# data: p by n data matrix
+# horizon: forecast horizon
+# test_year: data in the testing period
+# err: error criterion
+# forecasting_method: univariate time-series forecasting method
+
+point_fore_eval <- function(beta_selected, data, horizon, test_year, err, forecasting_method)
+{
+    grid = nrow(data)
+    n_test_year = length(test_year)
+    test_fore = matrix(NA, grid, (n_test_year + 1 - horizon))
+    for(iwk in 1:(n_test_year + 1 - horizon))
+    {
+        test_fore[,iwk] = GW_LRC_nonstationary(beta = beta_selected, dat = data[,1:(min(test_year) - 2 + iwk)], fh = horizon,
+                                               fmethod = forecasting_method)
+        print(iwk); rm(iwk)
+    }
+    if(err == "RMSPE")
+    {
+        err = ftsa:::rmspe(forecast = test_fore, true = data[,(min(test_year) + horizon - 1):max(test_year)])
+    }
+    else if(err == "MAPE")
+    {
+        err = ftsa:::mape(forecast = test_fore, true = data[,(min(test_year) + horizon - 1):max(test_year)])
+    }
+    else
+    {
+        warning("error is not correctly specified.")
+    }
+    return(err)
+}
+
+##################
+## RMSPE (Female)
+# original scale
+##################
+
+## LRC_nonstationary (beta = NULL implying equal weighting)
+
+# ETS
+
+RMSPE_SWE_female_LRC_nonstationary = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    RMSPE_SWE_female_LRC_nonstationary[iwjk] = point_fore_eval(beta_selected = NULL,
+                                                               data = SWE_demo_female_log, horizon = iwjk,
+                                                               test_year = SWE_test_year, err = "RMSPE", forecasting_method = "ets")
+    print(iwjk); rm(iwjk)
+}
+round(mean(RMSPE_SWE_female_LRC_nonstationary), 4) # 8.6317
+
+# ARIMA
+
+RMSPE_SWE_female_LRC_nonstationary_ARIMA = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    RMSPE_SWE_female_LRC_nonstationary_ARIMA[iwjk] = point_fore_eval(beta_selected = NULL,
+                                                               data = SWE_demo_female_log, horizon = iwjk,
+                                                               test_year = SWE_test_year, err = "RMSPE", forecasting_method = "arima")
+    print(iwjk); rm(iwjk)
+}
+
+round(mean(RMSPE_SWE_female_LRC_nonstationary_ARIMA), 4) # 6.719
+
+## LRC_nonstationary (beta = selected)
+
+# ETS
+
+RMSPE_SWE_female_LRC_nonstationary_weighted = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    RMSPE_SWE_female_LRC_nonstationary_weighted[iwjk] = point_fore_eval(beta_selected = optim_mat_RMSPE_SWE_female_LRC_nonstationary[iwjk,1],
+                                                                        data = SWE_demo_female_log,
+                                                                        horizon = iwjk, test_year = SWE_test_year,
+                                                                        err = "RMSPE", forecasting_method = "ets")
+    print(iwjk); rm(iwjk)
+}
+round(mean(RMSPE_SWE_female_LRC_nonstationary_weighted), 4) # 8.1859
+
+# ARIMA
+
+RMSPE_SWE_female_LRC_nonstationary_weighted_ARIMA = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    RMSPE_SWE_female_LRC_nonstationary_weighted_ARIMA[iwjk] = point_fore_eval(beta_selected = optim_mat_RMSPE_SWE_female_LRC_nonstationary_ARIMA[iwjk,1],
+                                                                        data = SWE_demo_female_log,
+                                                                        horizon = iwjk, test_year = SWE_test_year,
+                                                                        err = "RMSPE", forecasting_method = "arima")
+    print(iwjk); rm(iwjk)
+}
+
+round(mean(RMSPE_SWE_female_LRC_nonstationary_weighted_ARIMA), 4) # 7.3512
+
+###################
+# summary (female)
+###################
+
+RMSPE_SWE_female_summary = data.frame(cbind(RMSPE_SWE_female_LRC_nonstationary,
+                                            RMSPE_SWE_female_LRC_nonstationary_weighted,
+                                            RMSPE_SWE_female_LRC_nonstationary_ARIMA,
+                                            RMSPE_SWE_female_LRC_nonstationary_weighted_ARIMA))
+colnames(RMSPE_SWE_female_summary) = c("LRC_nonstationary", "LRC_nonstationary_weighted",
+                                       "LRC", "LRC_weighted")
+rownames(RMSPE_SWE_female_summary) = 1:30
+
+
+###############
+## RMSPE (Male)
+###############
+
+## LRC_nonstationary (beta = NULL)
+
+# ETS
+
+RMSPE_SWE_male_LRC_nonstationary = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    RMSPE_SWE_male_LRC_nonstationary[iwjk] = point_fore_eval(beta_selected = NULL,
+                                                             data = SWE_demo_male_log, horizon = iwjk,
+                                                             test_year = SWE_test_year, err = "RMSPE", forecasting_method = "ets")
+    print(iwjk); rm(iwjk)
+}
+round(mean(RMSPE_SWE_male_LRC_nonstationary), 4) # 10.0965
+
+# ARIMA
+
+RMSPE_SWE_male_LRC_nonstationary_ARIMA = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    RMSPE_SWE_male_LRC_nonstationary_ARIMA[iwjk] = point_fore_eval(beta_selected = NULL,
+                                                             data = SWE_demo_male_log, horizon = iwjk,
+                                                             test_year = SWE_test_year, err = "RMSPE", forecasting_method = "arima")
+    print(iwjk); rm(iwjk)
+}
+
+round(mean(RMSPE_SWE_male_LRC_nonstationary_ARIMA), 4) # 8.4524
+
+## LRC_nonstationary (beta = weighted)
+
+# ETS
+
+RMSPE_SWE_male_LRC_nonstationary_weighted = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    RMSPE_SWE_male_LRC_nonstationary_weighted[iwjk] = point_fore_eval(beta_selected = optim_mat_RMSPE_SWE_male_LRC_nonstationary[iwjk,1],
+                                                                      data = SWE_demo_male_log,
+                                                                      horizon = iwjk, test_year = SWE_test_year,
+                                                                      err = "RMSPE", forecasting_method = "ets")
+    print(iwjk); rm(iwjk)
+}
+round(mean(RMSPE_SWE_male_LRC_nonstationary_weighted), 4) # 9.0875
+
+# ARIMA
+
+RMSPE_SWE_male_LRC_nonstationary_weighted_ARIMA = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    RMSPE_SWE_male_LRC_nonstationary_weighted_ARIMA[iwjk] = point_fore_eval(beta_selected = optim_mat_RMSPE_SWE_male_LRC_nonstationary_ARIMA[iwjk,1],
+                                                                      data = SWE_demo_male_log,
+                                                                      horizon = iwjk, test_year = SWE_test_year,
+                                                                      err = "RMSPE", forecasting_method = "arima")
+    print(iwjk); rm(iwjk)
+}
+
+round(mean(RMSPE_SWE_male_LRC_nonstationary_weighted_ARIMA), 4) # 7.9802
+
+# summary (female)
+
+RMSPE_SWE_male_summary = data.frame(cbind(RMSPE_SWE_male_LRC_nonstationary, RMSPE_SWE_male_LRC_nonstationary_weighted,
+                                          RMSPE_SWE_male_LRC_nonstationary_ARIMA, RMSPE_SWE_male_LRC_nonstationary_weighted_ARIMA))
+colnames(RMSPE_SWE_male_summary) = c("LRC_nonstationary", "LRC_nonstationary_weighted",
+                                     "LRC", "LRC_weighted")
+rownames(RMSPE_SWE_male_summary) = 1:30
+
+
+#################
+## MAPE (Female)
+#################
+
+## LRC_nonstationary (beta = NULL)
+
+# ETS
+
+MAPE_SWE_female_LRC_nonstationary = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    MAPE_SWE_female_LRC_nonstationary[iwjk] = point_fore_eval(beta_selected = NULL, data = SWE_demo_female_log, horizon = iwjk,
+                                                              test_year = SWE_test_year, err = "MAPE", forecasting_method = "ets")
+    print(iwjk); rm(iwjk)
+}
+round(mean(MAPE_SWE_female_LRC_nonstationary), 4) # 6.8909
+
+# ARIMA
+
+MAPE_SWE_female_LRC_nonstationary_ARIMA = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    MAPE_SWE_female_LRC_nonstationary_ARIMA[iwjk] = point_fore_eval(beta_selected = NULL, data = SWE_demo_female_log, horizon = iwjk,
+                                                              test_year = SWE_test_year, err = "MAPE", forecasting_method = "arima")
+    print(iwjk); rm(iwjk)
+}
+
+round(mean(MAPE_SWE_female_LRC_nonstationary_ARIMA), 4) # 5.1497
+
+## LRC_nonstationary (beta = weighted)
+
+# ETS
+
+MAPE_SWE_female_LRC_nonstationary_weighted = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    MAPE_SWE_female_LRC_nonstationary_weighted[iwjk] = point_fore_eval(beta_selected = optim_mat_MAPE_SWE_female_LRC_nonstationary[iwjk,1],
+                                                                       data = SWE_demo_female_log,
+                                                                       horizon = iwjk, test_year = SWE_test_year,
+                                                                       err = "MAPE", forecasting_method = "ets")
+    print(iwjk); rm(iwjk)
+}
+round(mean(MAPE_SWE_female_LRC_nonstationary_weighted), 4) # 6.5301
+
+# ARIMA
+
+MAPE_SWE_female_LRC_nonstationary_weighted_ARIMA = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    MAPE_SWE_female_LRC_nonstationary_weighted_ARIMA[iwjk] = point_fore_eval(beta_selected = optim_mat_MAPE_SWE_female_LRC_nonstationary_ARIMA[iwjk,1],
+                                                                            data = SWE_demo_female_log,
+                                                                            horizon = iwjk, test_year = SWE_test_year,
+                                                                            err = "MAPE", forecasting_method = "arima")
+    print(iwjk); rm(iwjk)
+}
+round(mean(MAPE_SWE_female_LRC_nonstationary_weighted_ARIMA), 4) # 5.6138
+
+###################
+# summary (female)
+###################
+
+MAPE_SWE_female_summary = data.frame(cbind(MAPE_SWE_female_LRC_nonstationary, MAPE_SWE_female_LRC_nonstationary_weighted,
+                                           MAPE_SWE_female_LRC_nonstationary_ARIMA, MAPE_SWE_female_LRC_nonstationary_weighted_ARIMA))
+colnames(MAPE_SWE_female_summary) = c("LRC_nonstationary", "LRC_nonstationary_weighted",
+                                      "LRC", "LRC_weighted")
+rownames(MAPE_SWE_female_summary) = 1:30
+
+
+###############
+## MAPE (Male)
+###############
+
+## LRC_nonstationary (beta = NULL)
+
+# ETS
+
+MAPE_SWE_male_LRC_nonstationary = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    MAPE_SWE_male_LRC_nonstationary[iwjk] = point_fore_eval(beta_selected = NULL, criterion = "LRC_nonstationary",
+                                                            data = SWE_demo_male_log, horizon = iwjk,
+                                                            test_year = SWE_test_year, err = "MAPE", forecasting_method = "ets")
+    print(iwjk); rm(iwjk)
+}
+round(mean(MAPE_SWE_male_LRC_nonstationary), 4) # 8.4416
+
+# ARIMA
+
+MAPE_SWE_male_LRC_nonstationary_ARIMA = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    MAPE_SWE_male_LRC_nonstationary_ARIMA[iwjk] = point_fore_eval(beta_selected = NULL,
+                                                            data = SWE_demo_male_log, horizon = iwjk,
+                                                            test_year = SWE_test_year, err = "MAPE", forecasting_method = "arima")
+    print(iwjk); rm(iwjk)
+}
+round(mean(MAPE_SWE_male_LRC_nonstationary_ARIMA), 4) # 6.9584
+
+## LRC_nonstationary (beta = selected)
+
+# ETS
+
+MAPE_SWE_male_LRC_nonstationary_weighted = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    MAPE_SWE_male_LRC_nonstationary_weighted[iwjk] = point_fore_eval(beta_selected = optim_mat_MAPE_SWE_male_LRC_nonstationary[iwjk,1],
+                                                                     data = SWE_demo_male_log,
+                                                                     horizon = iwjk, test_year = SWE_test_year,
+                                                                     err = "MAPE", forecasting_method = "ets")
+    print(iwjk); rm(iwjk)
+}
+round(mean(MAPE_SWE_male_LRC_nonstationary_weighted), 4) # 7.6075
+
+# ARIMA
+
+MAPE_SWE_male_LRC_nonstationary_weighted_ARIMA = vector("numeric", length(SWE_test_year))
+for(iwjk in 1:length(SWE_test_year))
+{
+    MAPE_SWE_male_LRC_nonstationary_weighted_ARIMA[iwjk] = point_fore_eval(beta_selected = optim_mat_MAPE_SWE_male_LRC_nonstationary_ARIMA[iwjk,1],
+                                                                     data = SWE_demo_male_log,
+                                                                     horizon = iwjk, test_year = SWE_test_year,
+                                                                     err = "MAPE", forecasting_method = "arima")
+    print(iwjk); rm(iwjk)
+}
+round(mean(MAPE_SWE_male_LRC_nonstationary_weighted_ARIMA), 4) # 6.4053
+
+# summary (male)
+
+MAPE_SWE_male_summary = data.frame(cbind(MAPE_SWE_male_LRC_nonstationary, MAPE_SWE_male_LRC_nonstationary_weighted,
+                                         MAPE_SWE_male_LRC_nonstationary_ARIMA, MAPE_SWE_male_LRC_nonstationary_weighted_ARIMA))
+colnames(MAPE_SWE_male_summary) = c("LRC_nonstationary", "LRC_nonstationary_weighted",
+                                    "LRC", "LRC_weighted")
+rownames(MAPE_SWE_male_summary) = 1:30
+
+########
+# Plots
+########
+
+## univariate time series plots
+
+# females
+
+savepdf("Fig_1a", width = 12, height = 10, toplines = 0.8)
+plot(ts(log(SWE_demo$rate$female, base = 10)[1,], start = min(SWE_demo$year), end = max(SWE_demo$year)),
+     xlab = "Year", ylab = expression(paste(paste("Mortality rate (", log[10]), sep="", " scale)", sep=" ")),
+     ylim = c(-4.5, 0), col = 1, lty = 1, main = "Swedish females (1751 - 2022)")
+lines(ts(log(SWE_demo$rate$female, base = 10)[21,], start = min(SWE_demo$year), end = max(SWE_demo$year)),
+      col = 2, lty = 2)
+lines(ts(log(SWE_demo$rate$female, base = 10)[41,], start = min(SWE_demo$year), end = max(SWE_demo$year)),
+      col = 3, lty = 3)
+lines(ts(log(SWE_demo$rate$female, base = 10)[61,], start = min(SWE_demo$year), end = max(SWE_demo$year)),
+      col = 4, lty = 4)
+lines(ts(log(SWE_demo$rate$female, base = 10)[81,], start = min(SWE_demo$year), end = max(SWE_demo$year)),
+      col = 5, lty = 5)
+lines(ts(log(SWE_demo$rate$female, base = 10)[96,], start = min(SWE_demo$year), end = max(SWE_demo$year)),
+      col = 6, lty = 6)
+legend("bottomleft", c("0", "20", "40", "60", "80", "95+"), col = 1:6, lty = 1:6, ncol = 2, cex = 0.8)
+dev.off()
+
+# males
+
+savepdf("Fig_1b", width = 12, height = 10, toplines = 0.8)
+plot(ts(log(SWE_demo$rate$male, base = 10)[1,], start = min(SWE_demo$year), end = max(SWE_demo$year)),
+     xlab = "Year", ylab = expression(paste(paste("Mortality rate (", log[10]), sep="", " scale)", sep=" ")),
+     ylim = c(-4.5, 0), col = 1, lty = 1, main = "Swedish males (1751 - 2022)")
+lines(ts(log(SWE_demo$rate$male, base = 10)[21,], start = min(SWE_demo$year), end = max(SWE_demo$year)),
+      col = 2, lty = 2)
+lines(ts(log(SWE_demo$rate$male, base = 10)[41,], start = min(SWE_demo$year), end = max(SWE_demo$year)),
+      col = 3, lty = 3)
+lines(ts(log(SWE_demo$rate$male, base = 10)[61,], start = min(SWE_demo$year), end = max(SWE_demo$year)),
+      col = 4, lty = 4)
+lines(ts(log(SWE_demo$rate$male, base = 10)[81,], start = min(SWE_demo$year), end = max(SWE_demo$year)),
+      col = 5, lty = 5)
+lines(ts(log(SWE_demo$rate$male, base = 10)[96,], start = min(SWE_demo$year), end = max(SWE_demo$year)),
+      col = 6, lty = 6)
+dev.off()
+
+# functional time series plots
+
+savepdf("Fig_1c", width = 12, height = 10, toplines = 0.8)
+ages = 0:95
+plot(fts(ages, SWE_demo_female_log), xlab = "Age",
+         ylab = expression(paste(paste("Mortality rate (", log[10]), sep="", " scale)", sep=" ")),
+     main = "")
+dev.off()
+
+savepdf("Fig_1d", width = 12, height = 10, toplines = 0.8)
+plot(fts(ages, SWE_demo_male_log), xlab = "Age",
+     ylab = "",
+     main = "")
+dev.off()
+
+
+## Plots of forecasts
+
+savepdf("Fig_3a", width = 12, height = 10)
+RMSPE_SWE_female_summary %>%
+  mutate(x=1:30) %>%
+  pivot_longer(c(LRC_nonstationary, LRC_nonstationary_weighted, LRC, LRC_weighted)) %>%
+  mutate(color = case_when(name %in% c("LRC_nonstationary", "LRC_nonstationary_weighted") ~ "ETS",
+                            name %in% c("LRC", "LRC_weighted") ~ "ARIMA"),
+         lty = case_when(str_ends(name, "_weighted") ~ "Weighted", TRUE ~ "Standard")) %>%
+  ggplot(aes(x, y = value, color = color, lty = lty)) +
+  geom_line() +
+  xlab('') +
+  ylab('RMSPE') +
+  ylim(4.5, 16.5) +
+  labs(title='Female') +
+  theme(legend.position = c(0.12,0.72))
+dev.off()
+
+
+savepdf("Fig_3b", width = 12, height = 10)
+RMSPE_SWE_male_summary %>%
+  mutate(x=1:30) %>%
+  pivot_longer(c(LRC_nonstationary, LRC_nonstationary_weighted, LRC, LRC_weighted)) %>%
+  mutate(color = case_when(name %in% c("LRC_nonstationary", "LRC_nonstationary_weighted") ~ "ETS",
+                           name %in% c("LRC", "LRC_weighted") ~ "ARIMA"),
+         lty = case_when(str_ends(name, "_weighted") ~ "Weighted", TRUE ~ "Standard")) %>%
+  ggplot(aes(x, y = value, color = color, lty = lty)) +
+  geom_line() +
+  xlab('') +
+  ylab('') +
+  ylim(4.5, 16.5) +
+  labs(title='Male')+
+  theme(legend.position = "none")
+dev.off()
+
+
+savepdf("Fig_3c", width = 12, height = 10)
+MAPE_SWE_female_summary %>%
+  mutate(x=1:30) %>%
+  pivot_longer(c(LRC_nonstationary, LRC_nonstationary_weighted, LRC, LRC_weighted)) %>%
+  mutate(color = case_when(name %in% c("LRC_nonstationary", "LRC_nonstationary_weighted") ~ "ETS",
+                           name %in% c("LRC", "LRC_weighted") ~ "ARIMA"),
+         lty = case_when(str_ends(name, "_weighted") ~ "Weighted", TRUE ~ "Standard")) %>%
+  ggplot(aes(x, y = value, color = color, lty = lty)) +
+  geom_line() +
+  xlab('Forecast horizon') +
+  ylab('MAPE') +
+  ylim(2.5, 14) +
+  theme(legend.position = "none")
+dev.off()
+
+
+savepdf("Fig_3d", width = 12, height = 10)
+MAPE_SWE_male_summary %>%
+  mutate(x=1:30) %>%
+  pivot_longer(c(LRC_nonstationary, LRC_nonstationary_weighted, LRC, LRC_weighted)) %>%
+  mutate(color = case_when(name %in% c("LRC_nonstationary", "LRC_nonstationary_weighted") ~ "ETS",
+                           name %in% c("LRC", "LRC_weighted") ~ "ARIMA"),
+         lty = case_when(str_ends(name, "_weighted") ~ "Weighted", TRUE ~ "Standard")) %>%
+  ggplot(aes(x, y = value, color = color, lty = lty)) +
+  geom_line() +
+  xlab('Forecast horizon') +
+  ylab('')+
+  ylim(2.5, 14) +
+  theme(legend.position = "none")
+dev.off()
+
+
+```
 

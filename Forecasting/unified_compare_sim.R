@@ -17,9 +17,13 @@ rolling_forecasting_pipeline_compact_order_method <- function(X,
                                                               seed = 1,
                                                               far_benchmark_d = NULL,
                                                               order_selection_method = c("adaptive_ic", "cv", "both"),
-                                                              cv_order_window_type = c("expanding", "fixed")) {
+                                                              cv_order_window_type = c("expanding", "fixed"),
+                                                              memory_cov_type = "sample",
+                                                              memory_cov_band_const = 1) {
   order_selection_method <- match.arg(order_selection_method)
   cv_order_window_type <- match.arg(cv_order_window_type, several.ok = TRUE)
+  order_selection_method <- match.arg(order_selection_method)
+  memory_cov_type <- match.arg(memory_cov_type,c("sample", "lrc_RS", "lrc_LRS"))
 
   order_methods <- if (order_selection_method == "both") {
     c("adaptive_ic", "cv")
@@ -180,21 +184,28 @@ rolling_forecasting_pipeline_compact_order_method <- function(X,
 
     set.seed(seed)
 
-    d_hat <- estimate_d_BC_LPWN2(
-      X_initial_train_centered,
+    d_result <- estimate_d_BC_LPWN2(
+      X = X_initial_train_centered,
       m_const = m_const,
       R_noise = R_noise,
       B = B,
-      burn_in = burn_in
-    )$d_BC_LPWN2
+      burn_in = burn_in,
+      memory_cov_type = memory_cov_type,
+      memory_cov_band_const = memory_cov_band_const
+    )
 
-    d_hat <- as.numeric(d_hat)
+    d_hat <- as.numeric(d_result$d_BC_LPWN2)
 
-    if (length(d_hat) != 1 || !is.finite(d_hat)) {
+    if (length(d_hat) != 1L || !is.finite(d_hat)) {
       stop("Estimated d is not a single finite value.")
     }
 
-    list(d_hat = d_hat, X_initial_train_centered = X_initial_train_centered)
+    list(
+      d_hat = d_hat,
+      X_initial_train_centered = X_initial_train_centered,
+      memory_cov_type = memory_cov_type,
+      memory_cov_band_const = memory_cov_band_const
+    )
   }
 
   run_adaptive_ic <- function() {
@@ -296,7 +307,9 @@ rolling_forecasting_pipeline_compact_order_method <- function(X,
       burn_in = burn_in,
       fracdiff_trim = fracdiff_trim,
       seed = seed,
-      window_type = cv_wtype
+      window_type = cv_wtype,
+      memory_cov_type = memory_cov_type,
+      memory_cov_band_const = memory_cov_band_const
     )
 
     d_hat <- as.numeric(cv_order$model_summary$d_hat[1])
@@ -388,6 +401,10 @@ rolling_forecasting_pipeline_compact_order_method <- function(X,
       z$error_log))
   )
 }
+
+
+
+
 
 parallel_repeat_full_forecasting_pipeline_compact_order_method <- function(n_rep = 100,
                                                                            grid,
@@ -781,10 +798,6 @@ rolling_forecasting_pipeline_empirical <- function(X,
     ))
   }
 
-  # ==========================================================
-  # Rolling forecasting for one window type
-  # ==========================================================
-
   rolling_split_centered <- function(window_type)
   {
     window_type <-
@@ -797,13 +810,6 @@ rolling_forecasting_pipeline_empirical <- function(X,
 
     d_method <-
       list(farma = d_hat, far = d_hat_far)
-
-    # --------------------------------------------------------
-    # Horizon-specific forecast origins
-    #
-    # At each origin, h_here determines how many forecast
-    # horizons remain inside the validation or test block.
-    # --------------------------------------------------------
 
     valid_steps <-
       seq.int(from = train_end, to = valid_end - 1L)
@@ -897,9 +903,7 @@ rolling_forecasting_pipeline_empirical <- function(X,
         })
       }), methods_used)
 
-    # ========================================================
-    # Validation forecasts
-    # ========================================================
+
 
     for (k in seq_along(valid_steps))
     {
@@ -1026,9 +1030,7 @@ rolling_forecasting_pipeline_empirical <- function(X,
       }
     }
 
-    # ========================================================
-    # Pointwise ECP calibration
-    # ========================================================
+
 
     calibration <- list()
     calibration_list <- list()
@@ -1088,9 +1090,7 @@ rolling_forecasting_pipeline_empirical <- function(X,
       }
     }
 
-    # ========================================================
-    # Test accumulators
-    # ========================================================
+
 
     conformal_accum <-
       setNames(lapply(methods_used, function(m)
@@ -1111,9 +1111,7 @@ rolling_forecasting_pipeline_empirical <- function(X,
 
     error_curve_list <- list()
 
-    # ========================================================
-    # Test forecasts
-    # ========================================================
+
 
     for (k in seq_along(test_steps))
     {
@@ -1313,9 +1311,7 @@ rolling_forecasting_pipeline_empirical <- function(X,
       }
     }
 
-    # ========================================================
-    # Pointwise test summaries
-    # ========================================================
+
 
     conformal_summary_list <- list()
 
@@ -1380,9 +1376,7 @@ rolling_forecasting_pipeline_empirical <- function(X,
     )
   }
 
-  # ==========================================================
-  # Run expanding and/or fixed windows
-  # ==========================================================
+
 
   error_curve_list <- list()
   calibration_list <- list()
@@ -1434,9 +1428,6 @@ rolling_forecasting_pipeline_empirical <- function(X,
     }
   }
 
-  # ==========================================================
-  # Return
-  # ==========================================================
 
   list(
     model_summary =
