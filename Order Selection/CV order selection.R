@@ -12,10 +12,16 @@ select_order_cv_forecast_full <- function(
     burn_in = 200,
     fracdiff_trim = 100,
     seed = 1,
-    window_type = c("expanding", "fixed")
+    window_type = c("expanding", "fixed"),
+    memory_cov_type = "sample",
+    memory_cov_band_const = 1
 ) {
 
   window_type <- match.arg(window_type)
+  memory_cov_type <- match.arg(
+    memory_cov_type,
+    c("sample", "lrc_RS", "lrc_LRS")
+  )
 
   X <- as.matrix(X)
 
@@ -58,7 +64,9 @@ select_order_cv_forecast_full <- function(
     m_const = m_const,
     R_noise = R_noise,
     B = B,
-    burn_in = burn_in
+    burn_in = burn_in,
+    memory_cov_type = memory_cov_type,
+    memory_cov_band_const = memory_cov_band_const
   )$d_BC_LPWN2
 
   d_hat <- as.numeric(d_hat)
@@ -316,7 +324,9 @@ select_order_cv_forecast_full <- function(
           m_const = m_const,
           R_noise = R_noise,
           B = B,
-          burn_in = burn_in
+          burn_in = burn_in,
+          memory_cov_type = memory_cov_type,
+          memory_cov_band_const = memory_cov_band_const
         ),
         cv_overall = tibble::tibble(),
         cv_horizon = tibble::tibble(),
@@ -423,7 +433,9 @@ select_order_cv_forecast_full <- function(
       m_const = m_const,
       R_noise = R_noise,
       B = B,
-      burn_in = burn_in
+      burn_in = burn_in,
+      memory_cov_type = memory_cov_type,
+      memory_cov_band_const = memory_cov_band_const
     ),
     cv_overall = cv_overall,
     cv_horizon = cv_horizon,

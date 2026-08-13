@@ -40,7 +40,12 @@ library(grid)
 
 
 ```{r}
-setwd("~/Desktop/FTS Order Selection")
+project_root <- if (file.exists("Forecasting/unified forecast comparisons.Rmd")) {
+  normalizePath(".")
+} else {
+  normalizePath("..")
+}
+setwd(project_root)
 source("Order Selection/Marginal BIC.R")
 source("Order Selection/CV order selection.R")
 source("DGP non-stationary FTS/sim_FARMA.R")
@@ -53,6 +58,7 @@ source("Operator Estimation/Kuenzer FARMA Estimation.R")
 source("Forecasting/Forecasting Helper.R")
 source("Forecasting/forecast_compare_sim.R")
 source("Forecasting/unified_compare_sim.R")
+source("Forecasting/forecast_plot_helpers.R")
 ```
 
 
@@ -186,10 +192,6 @@ unified_wis <- make_wis_summary(unified_forecast_res)
 ### Estimation of d
 
 ```{r}
-library(tidyverse)
-library(cowplot)
-library(grid)
-
 plot_base_size <- 25
 plot_title_size <- 28
 strip_text_size <- 20
@@ -997,89 +999,47 @@ make_unified_balanced_ratio_summary <- function(df,
 }
 
 make_unified_method_legend <- function() {
-  legend_df <- tibble(
-    order_selection_method = factor(c("Functional IC", "CV"), levels = c("Functional IC", "CV")),
-    x_start = c(3.0, 7.0),
-    x_end = c(3.75, 7.75),
-    x_text = c(4.08, 8.08),
-    y = 1
+  make_two_method_legend(
+    method_cols = method_cols_unified,
+    method_linetypes = method_ltys_unified,
+    method_shapes = method_shapes_unified,
+    title_size = legend_title_size,
+    text_size = legend_text_size,
+    point_size = legend_point_size,
+    line_width = legend_line_width,
+    base_size = plot_base_size
   )
-  
-  ggplot(legend_df) +
-    annotate(
-      "text",
-      x = 0,
-      y = 1,
-      label = "Order selection",
-      hjust = 0,
-      size = legend_title_size,
-      fontface = "bold"
-    ) +
-    geom_segment(
-      aes(
-        x = x_start,
-        xend = x_end,
-        y = y,
-        yend = y,
-        colour = order_selection_method,
-        linetype = order_selection_method
-      ),
-      linewidth = legend_line_width,
-      show.legend = FALSE
-    ) +
-    geom_point(
-      aes(
-        x = x_end,
-        y = y,
-        colour = order_selection_method,
-        shape = order_selection_method
-      ),
-      size = legend_point_size,
-      show.legend = FALSE
-    ) +
-    geom_text(
-      aes(x = x_text, y = y, label = order_selection_method),
-      hjust = 0,
-      size = legend_text_size
-    ) +
-    scale_colour_manual(values = method_cols_unified) +
-    scale_linetype_manual(values = method_ltys_unified) +
-    scale_shape_manual(values = method_shapes_unified) +
-    coord_cartesian(xlim = c(0, 12),
-                    ylim = c(0.85, 1.15),
-                    clip = "off") +
-    theme_void(base_size = plot_base_size) +
-    theme(legend.position = "none",
-          plot.margin = margin(0, 0, 0, 0))
 }
 
-plot_unified_balanced_one_model <- function(df, model_show, y_limits = NULL) {
+plot_unified_balanced_one_model <- function(df,
+                                            model_show,
+                                            title = NULL,
+                                            value_col = "RMSE_ratio",
+                                            y_limits = NULL) {
   df_sub <- df %>%
     filter(as.character(model) == model_show)
+
+  if (model_show == "(1,1)" &&
+      all(c("ar_strength", "ma_strength") %in% names(df_sub))) {
+    df_sub <- df_sub %>%
+      filter(abs(ar_strength - ma_strength) < 1e-10)
+  }
   
   if (nrow(df_sub) == 0) {
     stop(paste("No data found for model", model_show))
   }
   
-  title_use <- unique(df_sub$model_title)[1]
+  title_use <- if (is.null(title)) unique(df_sub$model_title)[1] else title
   
   if (is.null(y_limits)) {
-    y_range <- range(c(df_sub$RMSE_ratio, 1), na.rm = TRUE)
-    
-    pad <- 0.06 * diff(y_range)
-    
-    if (!is.finite(pad) || pad == 0) {
-      pad <- 0.05
-    }
-    
-    y_limits <- range(c(y_range[1] - pad, y_range[2] + pad), na.rm = TRUE)
+    y_limits <- ratio_axis_limits(df_sub[[value_col]])
   }
   
   ggplot(
     df_sub,
     aes(
       x = h,
-      y = RMSE_ratio,
+      y = .data[[value_col]],
       group = order_selection_method,
       colour = order_selection_method,
       linetype = order_selection_method,
@@ -1138,90 +1098,33 @@ combine_four_unified_rmse_ratio_models <- function(df,
                                                    file_name = NULL,
                                                    width = 16,
                                                    height = 12,
-                                                   common_y = FALSE) {
+                                                   common_y = FALSE,
+                                                   value_col = "RMSE_ratio",
+                                                   y_limits = NULL,
+                                                   y_axis_label = "RMSE ratio to FARFIMA(1,1,0)") {
   models <- c("(1,0)", "(0,1)", "(2,0)", "(1,1)")
-  
-  df_use <- df %>%
-    filter(as.character(model) %in% models)
-  
-  legend <- make_unified_method_legend()
-  
-  y_limits <- NULL
-  
-  if (common_y) {
-    y_range <- range(c(df_use$RMSE_ratio, 1), na.rm = TRUE)
-    
-    pad <- 0.06 * diff(y_range)
-    
-    if (!is.finite(pad) || pad == 0) {
-      pad <- 0.05
-    }
-    
-    y_limits <- range(c(y_range[1] - pad, y_range[2] + pad), na.rm = TRUE)
-  }
-  
-  p1 <- plot_unified_balanced_one_model(df = df_use,
-                                        model_show = "(1,0)",
-                                        y_limits = y_limits)
-  
-  p2 <- plot_unified_balanced_one_model(df = df_use,
-                                        model_show = "(0,1)",
-                                        y_limits = y_limits)
-  
-  p3 <- plot_unified_balanced_one_model(df = df_use,
-                                        model_show = "(2,0)",
-                                        y_limits = y_limits)
-  
-  p4 <- plot_unified_balanced_one_model(df = df_use,
-                                        model_show = "(1,1)",
-                                        y_limits = y_limits)
-  
-  main_grid <- cowplot::plot_grid(p1,
-                                  p2,
-                                  p3,
-                                  p4,
-                                  ncol = 2,
-                                  align = "hv",
-                                  axis = "tblr")
-  
-  grid_with_shared_labels <- cowplot::ggdraw() +
-    cowplot::draw_plot(
-      main_grid,
-      x = 0.078,
-      y = 0.085,
-      width = 0.90,
-      height = 0.89
-    ) +
-    cowplot::draw_label(
-      "RMSE ratio to FARFIMA(1,1,0)",
-      x = 0.020,
-      y = 0.53,
-      angle = 90,
-      size = shared_label_size
-    ) +
-    cowplot::draw_label("Forecast horizon h",
-                        x = 0.53,
-                        y = 0.022,
-                        size = shared_label_size)
-  
-  final_plot <- cowplot::plot_grid(
-    legend,
-    grid_with_shared_labels,
-    ncol = 1,
-    rel_heights = c(0.13, 1)
+  titles <- c(
+    "FARFIMA(1,d,0)",
+    "FARFIMA(0,d,1)",
+    "FARFIMA(2,d,0)",
+    "FARFIMA(1,d,1)"
   )
-  
-  if (!is.null(file_name)) {
-    ggsave(
-      filename = file_name,
-      plot = final_plot,
-      width = width,
-      height = height,
-      dpi = 1200
-    )
-  }
-  
-  final_plot
+
+  assemble_ratio_panel_grid(
+    df = df,
+    models = models,
+    titles = titles,
+    value_col = value_col,
+    plot_model = plot_unified_balanced_one_model,
+    legend = make_unified_method_legend(),
+    y_axis_label = y_axis_label,
+    file_name = file_name,
+    width = width,
+    height = height,
+    y_limits = y_limits,
+    common_y = common_y,
+    shared_label_size = shared_label_size
+  )
 }
 
 unified_balanced_ratio_T1000_expanding <-
@@ -1235,7 +1138,7 @@ unified_balanced_ratio_T1000_expanding <-
 p_unified_rmse_ratio_2x2 <-
   combine_four_unified_rmse_ratio_models(
     df = unified_balanced_ratio_T1000_expanding,
-    file_name = "unified_rmse_ratio_balanced_expanding_T1000_2x2.pdf",
+    file_name = "Sim Plots Unified/unified_rmse_ratio_balanced_expanding_T1000_2x2.pdf",
     width = 16,
     height = 16,
     common_y = FALSE
@@ -1248,7 +1151,7 @@ p_unified_rmse_ratio_2x2 <-
 p_unified_rmse_ratio_2x2 <-
   combine_four_unified_rmse_ratio_models(
     df = unified_balanced_ratio_T1000_expanding,
-    file_name = "unified_rmse_ratio_balanced_expanding_T1000_2x2.pdf",
+    file_name = "Plots Slides/unified_rmse_ratio_balanced_expanding_T1000_2x2.pdf",
     width = 20,
     height = 15,
     common_y = FALSE
@@ -1633,7 +1536,7 @@ prepare_unified_ecp_data <- function(df,
           "(1,1)"
         )
       ),
-      
+
       d_label = factor(
         paste0("d==", d_true),
         levels = paste0(
@@ -1680,7 +1583,7 @@ prepare_unified_ecp_data <- function(df,
     )
 }
 
-make_unified_method_legend <- function() {
+make_unified_forecast_method_legend <- function() {
   
   legend_df <- tibble(
     forecast_method = factor(
@@ -1933,7 +1836,7 @@ combine_four_unified_ecp_models_shared_axes <- function(
     height = 12,
     y_limits = c(0.85, 1.00)) {
   
-  legend <- make_unified_method_legend()
+  legend <- make_unified_forecast_method_legend()
   
   p1 <- plot_unified_ecp_one_model(
     df = df,
@@ -2107,20 +2010,9 @@ axis_tick_width <- 0.6
 panel_spacing_size <- 0.75
 plot_margin_size <- 5
 
-method_cols_score_ratio <- c(
-  "Functional IC" = "#D95F02",
-  "CV" = "#7570B3"
-)
-
-method_ltys_score_ratio <- c(
-  "Functional IC" = "solid",
-  "CV" = "dashed"
-)
-
-method_shapes_score_ratio <- c(
-  "Functional IC" = 16,
-  "CV" = 17
-)
+method_cols_score_ratio <- method_cols_unified
+method_ltys_score_ratio <- method_ltys_unified
+method_shapes_score_ratio <- method_shapes_unified
 
 prepare_unified_score_ratio_data <- function(df,
                                              alpha_show = NULL,
@@ -2247,6 +2139,19 @@ prepare_unified_score_ratio_data <- function(df,
           "(1,1)"
         )
       ),
+
+      model_title = case_when(
+        model == "(1,0)" ~ "FARFIMA(1,d,0)",
+        model == "(0,1)" ~ "FARFIMA(0,d,1)",
+        model == "(2,0)" ~ "FARFIMA(2,d,0)",
+        model == "(1,1)" ~ "FARFIMA(1,d,1)"
+      ),
+
+      strength_label = case_when(
+        p_true > 0 & q_true == 0 ~ paste0("psi==", ar_strength),
+        p_true == 0 & q_true > 0 ~ paste0("nu==", ma_strength),
+        p_true > 0 & q_true > 0 ~ paste0("psi~'='~nu~'='~", ar_strength)
+      ),
       
       d_label = factor(
         paste0("d==", d_true),
@@ -2286,243 +2191,20 @@ prepare_unified_score_ratio_data <- function(df,
 }
 
 make_score_ratio_legend <- function() {
-  
-  legend_df <- tibble(
-    order_selection_method = factor(
-      c(
-        "Functional IC",
-        "CV"
-      ),
-      levels = c(
-        "Functional IC",
-        "CV"
-      )
-    ),
-    x_start = c(3.5, 7.3),
-    x_end = c(4.0, 7.8),
-    x_text = c(4.3, 8.1),
-    y = 1
-  )
-  
-  ggplot(legend_df) +
-    annotate(
-      "text",
-      x = 0,
-      y = 1,
-      label = "Order selection",
-      hjust = 0,
-      size = legend_title_size,
-      fontface = "bold"
-    ) +
-    geom_segment(
-      aes(
-        x = x_start,
-        xend = x_end,
-        y = y,
-        yend = y,
-        colour = order_selection_method,
-        linetype = order_selection_method
-      ),
-      linewidth = legend_line_width,
-      show.legend = FALSE
-    ) +
-    geom_point(
-      aes(
-        x = x_end,
-        y = y,
-        colour = order_selection_method,
-        shape = order_selection_method
-      ),
-      size = legend_point_size,
-      show.legend = FALSE
-    ) +
-    geom_text(
-      aes(
-        x = x_text,
-        y = y,
-        label = order_selection_method
-      ),
-      hjust = 0,
-      size = legend_text_size
-    ) +
-    scale_colour_manual(
-      values = method_cols_score_ratio
-    ) +
-    scale_linetype_manual(
-      values = method_ltys_score_ratio
-    ) +
-    scale_shape_manual(
-      values = method_shapes_score_ratio
-    ) +
-    coord_cartesian(
-      xlim = c(0, 11),
-      ylim = c(0.85, 1.15),
-      clip = "off"
-    ) +
-    theme_void(
-      base_size = plot_base_size
-    ) +
-    theme(
-      legend.position = "none",
-      plot.margin = margin(0, 0, 0, 0)
-    )
+  make_unified_method_legend()
 }
 
 plot_unified_score_ratio_one_model <- function(df,
                                                model_show,
                                                title = NULL,
                                                y_limits = NULL) {
-  
-  df_sub <- df %>%
-    filter(
-      as.character(model) == model_show
-    )
-  
-  if (model_show == "(1,1)") {
-    
-    df_sub <- df_sub %>%
-      filter(
-        abs(ar_strength - ma_strength) < 1e-10
-      )
-  }
-  
-  if (nrow(df_sub) == 0) {
-    stop(
-      paste(
-        "No data found for model",
-        model_show
-      )
-    )
-  }
-  
-  g <- ggplot(
-    df_sub,
-    aes(
-      x = h,
-      y = score_ratio,
-      group = order_selection_method,
-      colour = order_selection_method,
-      linetype = order_selection_method,
-      shape = order_selection_method
-    )
-  ) +
-    geom_hline(
-      yintercept = 1,
-      colour = "black",
-      linetype = "dashed",
-      linewidth = reference_line_width
-    ) +
-    geom_line(
-      linewidth = plot_line_width
-    ) +
-    geom_point(
-      size = plot_point_size
-    ) +
-    scale_colour_manual(
-      values = method_cols_score_ratio,
-      drop = FALSE
-    ) +
-    scale_linetype_manual(
-      values = method_ltys_score_ratio,
-      drop = FALSE
-    ) +
-    scale_shape_manual(
-      values = method_shapes_score_ratio,
-      drop = FALSE
-    ) +
-    scale_x_continuous(
-      breaks = sort(
-        unique(df_sub$h)
-      ),
-      expand = expansion(
-        mult = c(0.02, 0.04)
-      )
-    ) +
-    labs(
-      title = title,
-      x = NULL,
-      y = NULL
-    ) +
-    coord_cartesian(
-      ylim = y_limits
-    ) +
-    theme_classic(
-      base_size = plot_base_size
-    ) +
-    theme(
-      legend.position = "none",
-      
-      plot.title = element_text(
-        size = plot_title_size,
-        face = "bold",
-        hjust = 0.5
-      ),
-      
-      strip.background = element_rect(
-        fill = "grey95",
-        colour = "black"
-      ),
-      
-      strip.text = element_text(
-        size = strip_text_size
-      ),
-      
-      axis.text.x = element_text(
-        size = axis_text_size
-      ),
-      
-      axis.text.y = element_text(
-        size = axis_text_size
-      ),
-      
-      axis.ticks = element_line(
-        linewidth = axis_tick_width
-      ),
-      
-      axis.ticks.length = unit(
-        3,
-        "pt"
-      ),
-      
-      panel.spacing = unit(
-        panel_spacing_size,
-        "lines"
-      ),
-      
-      plot.margin = margin(
-        plot_margin_size,
-        plot_margin_size,
-        plot_margin_size,
-        plot_margin_size
-      )
-    )
-  
-  if (model_show %in% c("(1,0)", "(2,0)")) {
-    
-    g <- g +
-      facet_grid(
-        d_label ~ psi_label,
-        labeller = label_parsed
-      )
-    
-  } else if (model_show == "(0,1)") {
-    
-    g <- g +
-      facet_grid(
-        d_label ~ nu_label,
-        labeller = label_parsed
-      )
-    
-  } else if (model_show == "(1,1)") {
-    
-    g <- g +
-      facet_grid(
-        d_label ~ farma_label,
-        labeller = label_parsed
-      )
-  }
-  
-  g
+  plot_unified_balanced_one_model(
+    df = df,
+    model_show = model_show,
+    title = title,
+    value_col = "score_ratio",
+    y_limits = y_limits
+  )
 }
 
 combine_four_unified_score_ratio_models_shared_axes <- function(
@@ -2532,111 +2214,16 @@ combine_four_unified_score_ratio_models_shared_axes <- function(
     height = 12,
     y_limits = NULL,
     y_axis_label = "Interval score ratio to FARFIMA(1,1,0)") {
-  
-  if (is.null(y_limits)) {
-    
-    y_range <- range(
-      c(
-        df$score_ratio,
-        1
-      ),
-      na.rm = TRUE
-    )
-    
-    pad <- 0.06 * diff(y_range)
-    
-    if (!is.finite(pad) || pad == 0) {
-      pad <- 0.05
-    }
-    
-    y_limits <- c(
-      y_range[1] - pad,
-      y_range[2] + pad
-    )
-  }
-  
-  legend <- make_score_ratio_legend()
-  
-  p1 <- plot_unified_score_ratio_one_model(
+  combine_four_unified_rmse_ratio_models(
     df = df,
-    model_show = "(1,0)",
-    title = "FARFIMA(1,d,0)",
-    y_limits = y_limits
+    file_name = file_name,
+    width = width,
+    height = height,
+    common_y = TRUE,
+    value_col = "score_ratio",
+    y_limits = y_limits,
+    y_axis_label = y_axis_label
   )
-  
-  p2 <- plot_unified_score_ratio_one_model(
-    df = df,
-    model_show = "(0,1)",
-    title = "FARFIMA(0,d,1)",
-    y_limits = y_limits
-  )
-  
-  p3 <- plot_unified_score_ratio_one_model(
-    df = df,
-    model_show = "(2,0)",
-    title = "FARFIMA(2,d,0)",
-    y_limits = y_limits
-  )
-  
-  p4 <- plot_unified_score_ratio_one_model(
-    df = df,
-    model_show = "(1,1)",
-    title = "FARFIMA(1,d,1)",
-    y_limits = y_limits
-  )
-  
-  main_grid <- cowplot::plot_grid(
-    p1,
-    p2,
-    p3,
-    p4,
-    ncol = 2,
-    align = "hv",
-    axis = "tblr"
-  )
-  
-  grid_with_shared_labels <- cowplot::ggdraw() +
-    cowplot::draw_plot(
-      main_grid,
-      x = 0.078,
-      y = 0.085,
-      width = 0.90,
-      height = 0.89
-    ) +
-    cowplot::draw_label(
-      y_axis_label,
-      x = 0.020,
-      y = 0.53,
-      angle = 90,
-      size = shared_label_size
-    ) +
-    cowplot::draw_label(
-      "Forecast horizon h",
-      x = 0.53,
-      y = 0.022,
-      size = shared_label_size
-    )
-  
-  final_plot <- cowplot::plot_grid(
-    legend,
-    grid_with_shared_labels,
-    ncol = 1,
-    rel_heights = c(0.13, 1)
-  )
-  
-  if (!is.null(file_name)) {
-    
-    ggsave(
-      filename = file_name,
-      plot = final_plot,
-      width = width,
-      height = height,
-      dpi = 1200,
-      bg = "white"
-    )
-  }
-  
-  final_plot
 }
 
 unified_score_ratio_95_expanding <- prepare_unified_score_ratio_data(
@@ -2672,7 +2259,7 @@ unified_score_ratio_80_expanding <- prepare_unified_score_ratio_data(
 p_unified_score_ratio_95_expanding <-
   combine_four_unified_score_ratio_models_shared_axes(
     df = unified_score_ratio_95_expanding,
-    file_name = "unified_score_ratio_95_expanding_2x2.pdf",
+    file_name = "Sim Plots Unified/unified_score_ratio_95_expanding_2x2.pdf",
     width = 16,
     height = 16
   )
@@ -2680,7 +2267,7 @@ p_unified_score_ratio_95_expanding <-
 p_unified_score_ratio_80_expanding <-
   combine_four_unified_score_ratio_models_shared_axes(
     df = unified_score_ratio_80_expanding,
-    file_name = "unified_score_ratio_80_expanding_2x2.pdf",
+    file_name = "Sim Plots Unified/unified_score_ratio_80_expanding_2x2.pdf",
     width = 16,
     height = 16
   )
@@ -2693,7 +2280,7 @@ p_unified_score_ratio_80_expanding <-
 p_unified_score_ratio_95_expanding <-
   combine_four_unified_score_ratio_models_shared_axes(
     df = unified_score_ratio_95_expanding,
-    file_name = "unified_score_ratio_95_expanding_2x2.pdf",
+    file_name = "Plots Slides/unified_score_ratio_95_expanding_2x2.pdf",
     width = 20,
     height = 15
   )
@@ -2701,7 +2288,7 @@ p_unified_score_ratio_95_expanding <-
 p_unified_score_ratio_80_expanding <-
   combine_four_unified_score_ratio_models_shared_axes(
     df = unified_score_ratio_80_expanding,
-    file_name = "unified_score_ratio_80_expanding_2x2.pdf",
+    file_name = "Plots Slides/unified_score_ratio_80_expanding_2x2.pdf",
     width = 20,
     height = 15
   )
@@ -2793,6 +2380,17 @@ prepare_unified_wis_ratio_data <- function(df,
         paste0("(", p_true, ",", q_true, ")"),
         levels = c("(1,0)", "(0,1)", "(2,0)", "(1,1)")
       ),
+      model_title = case_when(
+        model == "(1,0)" ~ "FARFIMA(1,d,0)",
+        model == "(0,1)" ~ "FARFIMA(0,d,1)",
+        model == "(2,0)" ~ "FARFIMA(2,d,0)",
+        model == "(1,1)" ~ "FARFIMA(1,d,1)"
+      ),
+      strength_label = case_when(
+        p_true > 0 & q_true == 0 ~ paste0("psi==", ar_strength),
+        p_true == 0 & q_true > 0 ~ paste0("nu==", ma_strength),
+        p_true > 0 & q_true > 0 ~ paste0("psi~'='~nu~'='~", ar_strength)
+      ),
       d_label = factor(
         paste0("d==", d_true),
         levels = paste0("d==", sort(unique(d_true)))
@@ -2831,13 +2429,20 @@ unified_wis_ratio_expanding <- prepare_unified_wis_ratio_data(
 p_unified_wis_ratio_expanding <-
   combine_four_unified_score_ratio_models_shared_axes(
     df = unified_wis_ratio_expanding,
-    file_name = "unified_wis_ratio_expanding_2x2.pdf",
+    file_name = "Plots Slides/unified_wis_ratio_expanding_2x2.pdf",
     width = 20,
     height = 15,
     y_axis_label = "WIS ratio to FARFIMA(1,1,0)"
   )
 
-p_unified_wis_ratio_expanding
+p_unified_wis_ratio_expanding <-
+  combine_four_unified_score_ratio_models_shared_axes(
+    df = unified_wis_ratio_expanding,
+    file_name = "Sim Plots Unified/unified_wis_ratio_expanding_2x2.pdf",
+    width = 16,
+    height = 16,
+    y_axis_label = "WIS ratio to FARFIMA(1,1,0)"
+  )
 ```
 
 

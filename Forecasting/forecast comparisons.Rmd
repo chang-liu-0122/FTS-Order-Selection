@@ -37,7 +37,12 @@ library(kableExtra)
 
 
 ```{r}
-setwd("~/Desktop/FTS Order Selection")
+project_root <- if (file.exists("Forecasting/forecast comparisons.Rmd")) {
+  normalizePath(".")
+} else {
+  normalizePath("..")
+}
+setwd(project_root)
 source("Order Selection/Marginal BIC.R")
 source("Order Selection/CV order selection.R")
 source("DGP non-stationary FTS/sim_FARMA.R")
@@ -50,6 +55,7 @@ source("Operator Estimation/Kuenzer FARMA Estimation.R")
 source("Forecasting/Forecasting Helper.R")
 source("Forecasting/forecast_compare_sim.R")
 source("Forecasting/unified_compare_sim.R")
+source("Forecasting/forecast_plot_helpers.R")
 ```
 
 
@@ -118,7 +124,7 @@ forecast_sim <- parallel_sim_forecasting_FARMA_compare_compact(
 
 
 ```{r}
-forecast_res = readRDS("ideal_forecast_summary.rds")
+forecast_res = readRDS("Forecasting/ideal_forecast_summary.rds")
 ideal_wis <- make_wis_summary(forecast_res)
 ```
 
@@ -338,6 +344,7 @@ plot_forecast_ratio_one_model <- function(df,
                                           model_show,
                                           title = NULL,
                                           show_legend = FALSE,
+                                          value_col = "rmse_ratio",
                                           y_limits = NULL) {
   df_sub <- df %>%
     filter(as.character(model) == model_show)
@@ -357,7 +364,7 @@ plot_forecast_ratio_one_model <- function(df,
     df_sub,
     aes(
       x = h,
-      y = rmse_ratio,
+      y = .data[[value_col]],
       group = interaction(T_factor, window_type),
       colour = T_factor,
       linetype = window_type,
@@ -570,120 +577,33 @@ make_forecast_legend_manual <- function(df) {
           plot.margin = margin(0, 0, 0, 0))
 }
 
-combine_four_forecast_models_shared_axes <- function(df,
-                                                     models,
-                                                     titles,
-                                                     file_name = NULL,
-                                                     width = 16,
-                                                     height = 12,
-                                                     y_limits = NULL) {
-  if (length(models) != 4) {
-    stop("`models` must contain exactly four model labels.")
-  }
+make_forecast_legend_manual_core <- make_forecast_legend_manual
 
-  if (length(titles) != 4) {
-    stop("`titles` must contain exactly four plot titles.")
-  }
-
-  df_use <- df %>%
-    filter(as.character(model) %in% models)
-
-  if (nrow(df_use) == 0) {
-    stop("No observations remain for the requested models.")
-  }
-
-  if (is.null(y_limits)) {
-    y_range <- range(c(df_use$rmse_ratio, 1), na.rm = TRUE)
-
-    pad <- 0.06 * diff(y_range)
-
-    if (!is.finite(pad) || pad == 0) {
-      pad <- 0.05
-    }
-
-    y_limits <- c(y_range[1] - pad, y_range[2] + pad)
-  }
-
-  legend <- make_forecast_legend_manual(df_use)
-
-  p1 <- plot_forecast_ratio_one_model(
-    df = df_use,
-    model_show = models[1],
-    title = titles[1],
-    show_legend = FALSE,
-    y_limits = y_limits
+combine_four_forecast_models_shared_axes <- function(
+    df,
+    models,
+    titles,
+    file_name = NULL,
+    width = 16,
+    height = 12,
+    y_limits = NULL,
+    value_col = "rmse_ratio",
+    y_axis_label = "RMSE ratio to FARFIMA(1,1,0)") {
+  assemble_ratio_panel_grid(
+    df = df,
+    models = models,
+    titles = titles,
+    value_col = value_col,
+    plot_model = plot_forecast_ratio_one_model,
+    legend = make_forecast_legend_manual(df),
+    y_axis_label = y_axis_label,
+    file_name = file_name,
+    width = width,
+    height = height,
+    y_limits = y_limits,
+    common_y = TRUE,
+    shared_label_size = shared_label_size
   )
-
-  p2 <- plot_forecast_ratio_one_model(
-    df = df_use,
-    model_show = models[2],
-    title = titles[2],
-    show_legend = FALSE,
-    y_limits = y_limits
-  )
-
-  p3 <- plot_forecast_ratio_one_model(
-    df = df_use,
-    model_show = models[3],
-    title = titles[3],
-    show_legend = FALSE,
-    y_limits = y_limits
-  )
-
-  p4 <- plot_forecast_ratio_one_model(
-    df = df_use,
-    model_show = models[4],
-    title = titles[4],
-    show_legend = FALSE,
-    y_limits = y_limits
-  )
-
-  main_grid <- cowplot::plot_grid(p1,
-                                  p2,
-                                  p3,
-                                  p4,
-                                  ncol = 2,
-                                  align = "hv",
-                                  axis = "tblr")
-
-  grid_with_shared_labels <- cowplot::ggdraw() +
-    cowplot::draw_plot(
-      main_grid,
-      x = 0.078,
-      y = 0.085,
-      width = 0.90,
-      height = 0.89
-    ) +
-    cowplot::draw_label(
-      "RMSE ratio to FARFIMA(1,1,0)",
-      x = 0.020,
-      y = 0.53,
-      angle = 90,
-      size = shared_label_size
-    ) +
-    cowplot::draw_label("Forecast horizon h",
-                        x = 0.53,
-                        y = 0.022,
-                        size = shared_label_size)
-
-  final_plot <- cowplot::plot_grid(
-    legend,
-    grid_with_shared_labels,
-    ncol = 1,
-    rel_heights = c(0.13, 1)
-  )
-
-  if (!is.null(file_name)) {
-    ggsave(
-      filename = file_name,
-      plot = final_plot,
-      width = width,
-      height = height,
-      dpi = 1200
-    )
-  }
-
-  final_plot
 }
 ```
 
@@ -706,7 +626,7 @@ p_forecast_ratio <- combine_four_forecast_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "forecast_rmse_ratio_2x2.pdf",
+  file_name = "Forecasting/Sim Plots Ideal/forecast_rmse_ratio_2x2.pdf",
   width = 16,
   height = 14
 )
@@ -1649,98 +1569,7 @@ get_window_shapes <- function(df) {
 }
 
 make_forecast_legend_manual <- function(df) {
-  df_use <- df %>%
-    mutate(T_factor = droplevels(T_factor),
-           window_type = droplevels(window_type))
-
-  T_levels <- levels(df_use$T_factor)
-  window_levels <- levels(df_use$window_type)
-
-  T_df <- tibble(
-    T_factor = factor(T_levels, levels = T_levels),
-    x_symbol = 3.8 +
-      (seq_along(T_levels) - 1) * 3.6,
-    x_text = 4.5 +
-      (seq_along(T_levels) - 1) * 3.6,
-    y = 1,
-    label = paste0("T = ", T_levels)
-  )
-
-  window_df <- tibble(
-    window_type = factor(window_levels, levels = window_levels),
-    x_start = 3.3 +
-      (seq_along(window_levels) - 1) * 3.6,
-    x_end = 3.8 +
-      (seq_along(window_levels) - 1) * 3.6,
-    x_text = 4.5 +
-      (seq_along(window_levels) - 1) * 3.6,
-    y = 0.55,
-    label = window_levels
-  )
-
-  xmax <- max(c(T_df$x_text + 2, window_df$x_text + 2), na.rm = TRUE)
-
-  ggplot() +
-    annotate(
-      "text",
-      x = 0,
-      y = 1,
-      label = "Sample size T",
-      hjust = 0,
-      size = legend_title_size,
-      fontface = "bold"
-    ) +
-    geom_point(data = T_df,
-               aes(x = x_symbol, y = y, colour = T_factor),
-               size = legend_point_size) +
-    geom_text(
-      data = T_df,
-      aes(x = x_text, y = y, label = label),
-      hjust = 0,
-      size = legend_text_size
-    ) +
-    annotate(
-      "text",
-      x = 0,
-      y = 0.55,
-      label = "Window",
-      hjust = 0,
-      size = legend_title_size,
-      fontface = "bold"
-    ) +
-    geom_segment(
-      data = window_df,
-      aes(
-        x = x_start,
-        xend = x_end,
-        y = y,
-        yend = y,
-        linetype = window_type
-      ),
-      colour = "black",
-      linewidth = legend_line_width
-    ) +
-    geom_point(
-      data = window_df,
-      aes(x = x_end, y = y, shape = window_type),
-      colour = "black",
-      size = legend_point_size
-    ) +
-    geom_text(
-      data = window_df,
-      aes(x = x_text, y = y, label = label),
-      hjust = 0,
-      size = legend_text_size
-    ) +
-    scale_colour_manual(values = get_T_cols(df_use)) +
-    scale_linetype_manual(values = get_window_ltys(df_use)) +
-    scale_shape_manual(values = get_window_shapes(df_use)) +
-    coord_cartesian(xlim = c(0, xmax),
-                    ylim = c(0.35, 1.15),
-                    clip = "off") +
-    theme_void(base_size = plot_base_size) +
-    theme(legend.position = "none",
-          plot.margin = margin(0, 0, 0, 0))
+  make_forecast_legend_manual_core(df)
 }
 
 make_score_ratio_summary <- function(df,
@@ -1788,91 +1617,13 @@ plot_score_ratio_one_model <- function(df,
                                        model_show,
                                        title = NULL,
                                        y_limits = NULL) {
-  df_sub <- df %>%
-    filter(as.character(model) == model_show)
-
-  if (nrow(df_sub) == 0) {
-    stop(paste("No data found for model", model_show))
-  }
-
-  model_clean <- gsub("[() ]", "", model_show)
-
-  pq <- strsplit(model_clean, ",")[[1]]
-
-  p0 <- as.integer(pq[1])
-  q0 <- as.integer(pq[2])
-
-  g <- ggplot(
-    df_sub,
-    aes(
-      x = h,
-      y = score_ratio,
-      group = interaction(T_factor, window_type),
-      colour = T_factor,
-      linetype = window_type,
-      shape = window_type
-    )
-  ) +
-    geom_hline(
-      yintercept = 1,
-      colour = "black",
-      linetype = "dashed",
-      linewidth = reference_line_width
-    ) +
-    geom_line(linewidth = plot_line_width) +
-    geom_point(size = plot_point_size) +
-    scale_colour_manual(values = get_T_cols(df), drop = FALSE) +
-    scale_linetype_manual(values = get_window_ltys(df), drop = FALSE) +
-    scale_shape_manual(values = get_window_shapes(df), drop = FALSE) +
-    scale_x_continuous(breaks = sort(unique(df_sub$h)), expand = expansion(mult = c(0.02, 0.04))) +
-    labs(title = title, x = NULL, y = NULL) +
-    coord_cartesian(ylim = y_limits) +
-    theme_classic(base_size = plot_base_size) +
-    theme(
-      legend.position = "none",
-
-      plot.title = element_text(
-        size = plot_title_size,
-        face = "bold",
-        hjust = 0.5
-      ),
-
-      strip.background = element_rect(fill = "grey95", colour = "black"),
-
-      strip.text = element_text(size = strip_text_size),
-
-      axis.text.x = element_text(size = axis_text_size),
-
-      axis.text.y = element_text(size = axis_text_size),
-
-      axis.ticks = element_line(linewidth = axis_tick_width),
-
-      axis.ticks.length = unit(3, "pt"),
-
-      panel.spacing = unit(panel_spacing_size, "lines"),
-
-      plot.margin = margin(
-        plot_margin_size,
-        plot_margin_size,
-        plot_margin_size,
-        plot_margin_size
-      )
-    )
-
-  if (p0 > 0 && q0 == 0) {
-    g <- g +
-      facet_grid(. ~ psi_label, labeller = label_parsed)
-
-  } else if (p0 == 0 && q0 > 0) {
-    g <- g +
-      facet_grid(. ~ nu_label, labeller = label_parsed)
-
-  } else if (p0 > 0 && q0 > 0) {
-    g <- g +
-      facet_grid(nu_label ~ psi_label, labeller = label_parsed)
-  }
-
-  g
+  plot_forecast_ratio_one_model(
+    df = df,
+    model_show = model_show,
+    title = title,
+    value_col = "score_ratio",
+    y_limits = y_limits
+  )
 }
 
 combine_four_score_ratio_models_shared_axes <- function(df,
@@ -1883,110 +1634,17 @@ combine_four_score_ratio_models_shared_axes <- function(df,
                                                         height = 12,
                                                         y_limits = NULL,
                                                         y_axis_label = "Interval score ratio") {
-  if (length(models) != 4) {
-    stop("`models` must contain exactly four model labels.")
-  }
-
-  if (length(titles) != 4) {
-    stop("`titles` must contain exactly four plot titles.")
-  }
-
-  df_use <- df %>%
-    filter(as.character(model) %in% models)
-
-  if (nrow(df_use) == 0) {
-    stop("No observations remain for the requested models.")
-  }
-
-  if (is.null(y_limits)) {
-    y_range <- range(c(df_use$score_ratio, 1), na.rm = TRUE)
-
-    pad <- 0.06 * diff(y_range)
-
-    if (!is.finite(pad) || pad == 0) {
-      pad <- 0.05
-    }
-
-    y_limits <- c(y_range[1] - pad, y_range[2] + pad)
-  }
-
-  legend <- make_forecast_legend_manual(df_use)
-
-  p1 <- plot_score_ratio_one_model(
-    df = df_use,
-    model_show = models[1],
-    title = titles[1],
-    y_limits = y_limits
+  combine_four_forecast_models_shared_axes(
+    df = df,
+    models = models,
+    titles = titles,
+    file_name = file_name,
+    width = width,
+    height = height,
+    y_limits = y_limits,
+    value_col = "score_ratio",
+    y_axis_label = y_axis_label
   )
-
-  p2 <- plot_score_ratio_one_model(
-    df = df_use,
-    model_show = models[2],
-    title = titles[2],
-    y_limits = y_limits
-  )
-
-  p3 <- plot_score_ratio_one_model(
-    df = df_use,
-    model_show = models[3],
-    title = titles[3],
-    y_limits = y_limits
-  )
-
-  p4 <- plot_score_ratio_one_model(
-    df = df_use,
-    model_show = models[4],
-    title = titles[4],
-    y_limits = y_limits
-  )
-
-  main_grid <- cowplot::plot_grid(p1,
-                                  p2,
-                                  p3,
-                                  p4,
-                                  ncol = 2,
-                                  align = "hv",
-                                  axis = "tblr")
-
-  grid_with_shared_labels <- cowplot::ggdraw() +
-    cowplot::draw_plot(
-      main_grid,
-      x = 0.078,
-      y = 0.085,
-      width = 0.90,
-      height = 0.89
-    ) +
-    cowplot::draw_label(
-      y_axis_label,
-      x = 0.020,
-      y = 0.53,
-      angle = 90,
-      size = shared_label_size
-    ) +
-    cowplot::draw_label("Forecast horizon h",
-                        x = 0.53,
-                        y = 0.022,
-                        size = shared_label_size)
-
-  final_plot <- cowplot::plot_grid(
-    legend,
-    grid_with_shared_labels,
-    ncol = 1,
-    rel_heights = c(0.13, 1)
-  )
-
-  if (!is.null(file_name)) {
-    ggsave(
-      filename = file_name,
-      plot = final_plot,
-      width = width,
-      height = height,
-      dpi = 1200,
-      bg = "white"
-    )
-  }
-
-  final_plot
 }
 ```
 
@@ -2008,7 +1666,7 @@ p_score_ratio_95 <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "forecast_score_ratio_95_2x2.pdf",
+  file_name = "Forecasting/Sim Plots Ideal/forecast_score_ratio_95_2x2.pdf",
   width = 16,
   height = 14,
   y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"
@@ -2029,7 +1687,7 @@ p_score_ratio_80 <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "forecast_score_ratio_80_2x2.pdf",
+  file_name = "Forecasting/Sim Plots Ideal/forecast_score_ratio_80_2x2.pdf",
   width = 16,
   height = 14,
   y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"
@@ -2154,7 +1812,7 @@ p_wis_ratio <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "forecast_wis_ratio_2x2.pdf",
+  file_name = "Forecasting/Sim Plots Ideal/forecast_wis_ratio_2x2.pdf",
   width = 16,
   height = 14,
   y_axis_label = "WIS ratio to FARFIMA(1,1,0)"

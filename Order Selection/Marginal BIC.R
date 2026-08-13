@@ -56,9 +56,11 @@ compute_FT_far <- function(X, p, q, Npc = 1)
 
   T_eff <- ncol(E)
 
-  # H <- floor(log(T_eff))
-  # H = 30
-  H = 20
+  if(T_eff < 3) {
+    return(list(F_T = Inf, converged = FALSE))
+  }
+
+  H <- floor(log(T_eff))
 
   F_T <- temporal_dependence(E, H)
 
@@ -319,9 +321,6 @@ select_order_far_auto <- function(X, p_max = 5, q_max = 5, Npc = 1)
     search_path = search_path
   ))
 }
-
-
-
 
 
 

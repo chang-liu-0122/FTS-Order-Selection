@@ -21,7 +21,6 @@ library(fracdiff)
 library(freqdom.fda)
 library(beepr)
 library(future)
-library(future.apply)
 library(progressr)
 library(wwntests)
 library(tidyverse)
@@ -69,13 +68,6 @@ grid <- expand.grid(
   ) %>%
   dplyr::distinct()
 
-# grid <- expand.grid(
-#   T = c(5000),
-#   ar_strength = c(0.6),
-#   ma_strength = c(0.5),
-#   p = c(2),
-#   q = c(1)
-# )
 
 plan(multisession, workers = 10)
 handlers("progress")
