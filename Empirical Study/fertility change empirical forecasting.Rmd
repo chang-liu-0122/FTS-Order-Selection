@@ -211,6 +211,19 @@ ggplot(rainbow_data, aes(age, rate, group = year, colour = year)) +
   )
 ```
 
+```{r}
+savepdf("France_fertility_rainbow_plot", width = 12, height = 10, toplines = 0.8)
+
+plot(
+  fts(1:nrow(fer$FRATNP$smooth$rate$FRATNP_ASFR), fer$FRATNP$smooth$rate$FRATNP_ASFR),
+  xlab = "Age",
+  ylab = "Fertility rate"
+)
+
+dev.off()
+```
+
+
 # Integer-integration test
 
 The sequential (V_0/V_1) test below follows the authors' official R code. It uses 26 Fourier basis functions, trapezoidal integration, a Bartlett long-run covariance estimate with bandwidth (lfloor T^{1/5}\rfloor), and the published 2.5% and 97.5% critical values 0.04467116 and 2.12588475.
@@ -915,8 +928,8 @@ forecast_band_data <- imap_dfr(forecast_results, function(result, country) {
 ```{r forecast-band-plots, results='asis', fig.width=13, fig.height=8.5}
 plot_method_levels <- c("Benchmark", "Functional IC", "CV")
 plot_method_palette <- c(
-  "Benchmark" = "#7A5195",
-  "Functional IC" = "#D55E00",
+  "Benchmark" = "purple",
+  "Functional IC" = "red",
   "CV" = "#0072B2"
 )
 plot_method_linetypes <- c(

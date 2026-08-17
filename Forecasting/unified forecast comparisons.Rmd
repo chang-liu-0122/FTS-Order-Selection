@@ -1148,14 +1148,39 @@ p_unified_rmse_ratio_2x2 <-
 
 
 ```{r}
-p_unified_rmse_ratio_2x2 <-
-  combine_four_unified_rmse_ratio_models(
+p_unified_rmse_11 <-
+  plot_unified_balanced_one_model(
     df = unified_balanced_ratio_T1000_expanding,
-    file_name = "Plots Slides/unified_rmse_ratio_balanced_expanding_T1000_2x2.pdf",
-    width = 20,
-    height = 15,
-    common_y = FALSE
+    model_show = "(1,1)",
+    title = "FARFIMA(1,d,1)",
+    value_col = "RMSE_ratio",
+    y_limits = NULL
+  ) +
+  labs(
+    x = "Forecast horizon h",
+    y = "RMSE ratio to FARFIMA(1,1,0)",
+    colour = "Order selection",
+    linetype = "Order selection",
+    shape = "Order selection"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.direction = "horizontal",
+    legend.title = element_text(face = "bold"),
+    axis.title.x = element_text(size = shared_label_size),
+    axis.title.y = element_text(size = shared_label_size)
   )
+
+p_unified_rmse_11
+
+ggsave(
+  filename = "Plots Slides/unified_rmse_ratio_FARMA11.pdf",
+  plot = p_unified_rmse_11,
+  width = 12,
+  height = 10,
+  dpi = 1200,
+  bg = "white"
+)
 ```
 
 
@@ -2277,21 +2302,54 @@ p_unified_score_ratio_80_expanding <-
 
 
 ```{r}
-p_unified_score_ratio_95_expanding <-
-  combine_four_unified_score_ratio_models_shared_axes(
+# p_unified_score_ratio_95_expanding <-
+#   combine_four_unified_score_ratio_models_shared_axes(
+#     df = unified_score_ratio_95_expanding,
+#     file_name = "Plots Slides/unified_score_ratio_95_expanding_2x2.pdf",
+#     width = 20,
+#     height = 15
+#   )
+#
+# p_unified_score_ratio_80_expanding <-
+#   combine_four_unified_score_ratio_models_shared_axes(
+#     df = unified_score_ratio_80_expanding,
+#     file_name = "Plots Slides/unified_score_ratio_80_expanding_2x2.pdf",
+#     width = 20,
+#     height = 15
+#   )
+
+p_unified_score_ratio_11_95 <-
+  plot_unified_score_ratio_one_model(
     df = unified_score_ratio_95_expanding,
-    file_name = "Plots Slides/unified_score_ratio_95_expanding_2x2.pdf",
-    width = 20,
-    height = 15
+    model_show = "(1,1)",
+    title = "FARFIMA(1,d,1)",
+    y_limits = NULL
+  ) +
+  labs(
+    x = "Forecast horizon h",
+    y = "95% interval-score ratio to FARFIMA(1,1,0)",
+    colour = "Order selection",
+    linetype = "Order selection",
+    shape = "Order selection"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.direction = "horizontal",
+    legend.title = element_text(face = "bold"),
+    axis.title.x = element_text(size = shared_label_size),
+    axis.title.y = element_text(size = shared_label_size)
   )
 
-p_unified_score_ratio_80_expanding <-
-  combine_four_unified_score_ratio_models_shared_axes(
-    df = unified_score_ratio_80_expanding,
-    file_name = "Plots Slides/unified_score_ratio_80_expanding_2x2.pdf",
-    width = 20,
-    height = 15
-  )
+p_unified_score_ratio_11_95
+
+ggsave(
+  filename = "Plots Slides/unified_score_ratio_95_FARMA11.pdf",
+  plot = p_unified_score_ratio_11_95,
+  width = 12,
+  height = 10,
+  dpi = 1200,
+  bg = "white"
+)
 
 ```
 
