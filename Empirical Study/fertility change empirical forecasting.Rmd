@@ -74,15 +74,15 @@ method_key <- tribble(
 )
 
 method_palette <- c(
-  "Benchmark (FARFIMA(1,1,0))" = "#7A5195",
-  "Functional IC" = "#D55E00",
-  "CV" = "#0072B2"
+  "Benchmark (FARFIMA(1,1,0))" = "#1B9E77",
+  "Functional IC" = "#D95F02",
+  "CV" = "#7570B3"
 )
 
 method_shapes <- c(
-  "Benchmark (FARFIMA(1,1,0))" = 16,
-  "Functional IC" = 17,
-  "CV" = 15
+  "Benchmark (FARFIMA(1,1,0))" = 15,
+  "Functional IC" = 16,
+  "CV" = 17
 )
 
 method_linetypes <- c(
@@ -145,32 +145,23 @@ fertility_change <- function(x) {
   change
 }
 
-matrix_to_long <- function(x, country, data_type) {
-  as.data.frame(x) |>
-    rownames_to_column("age") |>
-    pivot_longer(-age, names_to = "year", values_to = "rate") |>
-    mutate(
-      country = country,
-      data_type = data_type,
-      age = parse_number(age),
-      year = parse_number(year)
-    )
-}
-
 fer <- read_rds("Empirical Study/demog_list_asfr.rds")
 country_codes <- c(Slovakia = "SVK", France = "FRATNP")
 
-fertility_data <- imap(country_codes, function(code, country) {
+fertility_data <- list()
+
+for (country in names(country_codes)) {
+  code <- country_codes[[country]]
   raw <- fer[[code]]$raw$rate[[paste0(code, "_ASFR")]] |> as.matrix()
   smooth <- fer[[code]]$smooth$rate[[paste0(code, "_ASFR")]] |> as.matrix()
   smooth <- repair_smooth(raw, smooth)
 
-  list(
+  fertility_data[[country]] <- list(
     raw = raw,
     smooth = smooth,
     smooth_change = fertility_change(smooth)
   )
-})
+}
 ```
 
 The year-to-year change is
@@ -184,287 +175,156 @@ A positive value means that fertility at age (u) declined from the preceding yea
 
 ## Raw and smoothed rainbow plots
 
-```{r rainbow-data}
-rainbow_data <- imap_dfr(fertility_data, function(x, country) {
-  bind_rows(
-    matrix_to_long(x$raw, country, "Raw"),
-    matrix_to_long(x$smooth, country, "Smoothed")
-  )
-})
-```
-
-```{r rainbow-plot, fig.width=12, fig.height=8}
-ggplot(rainbow_data, aes(age, rate, group = year, colour = year)) +
-  geom_line(linewidth = 0.65, alpha = 0.82) +
-  facet_grid(country ~ data_type, scales = "free_y") +
-  scale_colour_viridis_c(
-    option = "plasma",
-    end = 0.92,
-    guide = guide_colourbar(barwidth = 12)
-  ) +
-  labs(
-    title = "Age-specific fertility rates",
-    subtitle = "Earlier years are dark purple; later years are yellow",
-    x = "Age",
-    y = "Fertility rate",
-    colour = "Year"
-  )
-```
-
 ```{r}
-savepdf("France_fertility_rainbow_plot", width = 12, height = 10, toplines = 0.8)
+savepdf("France_fertility_smooth_rainbow_plot", width = 12, height = 10, toplines = 0.8)
 
 plot(
-  fts(1:nrow(fer$FRATNP$smooth$rate$FRATNP_ASFR), fer$FRATNP$smooth$rate$FRATNP_ASFR),
+  fts(1:nrow(fertility_data$France$smooth), fertility_data$France$smooth),
   xlab = "Age",
   ylab = "Fertility rate"
 )
 
 dev.off()
+
+savepdf("France_fertility_smooth_change_rainbow_plot", width = 12, height = 10, toplines = 0.8)
+
+plot(
+  fts(1:nrow(fertility_data$France$smooth_change), fertility_data$France$smooth_change),
+  xlab = "Age",
+  ylab = "Fertility rate change"
+)
+
+dev.off()
+
+savepdf("Slovakia_fertility_smooth_rainbow_plot", width = 12, height = 10, toplines = 0.8)
+
+plot(
+  fts(1:nrow(fertility_data$Slovakia$smooth), fertility_data$Slovakia$smooth),
+  xlab = "Age",
+  ylab = "Fertility rate"
+)
+
+dev.off()
+
+savepdf("Slovakia_fertility_smooth_change_rainbow_plot", width = 12, height = 10, toplines = 0.8)
+
+plot(
+  fts(1:nrow(fertility_data$Slovakia$smooth_change), fertility_data$Slovakia$smooth_change),
+  xlab = "Age",
+  ylab = "Fertility rate change"
+)
+
+dev.off()
+
 ```
 
 
-# Integer-integration test
+# Memory estimation and dependence diagnostics
 
-The sequential (V_0/V_1) test below follows the authors' official R code. It uses 26 Fourier basis functions, trapezoidal integration, a Bartlett long-run covariance estimate with bandwidth (lfloor T^{1/5}\rfloor), and the published 2.5% and 97.5% critical values 0.04467116 and 2.12588475.
+The full-sample estimate in this section is descriptive. The forecast experiment estimates (d) again from the initial training sample, so future test observations are not used to choose (d), (p), or (q). The fACF and fPACF below are calculated from the smoothed fertility-rate changes before fractional differencing.
 
-The authors provide reproducibility scripts rather than an exported R-package function, so the short wrapper below reproduces those scripts directly.
+```{r memory-estimation}
+slovakia_change <- fertility_data$Slovakia$smooth_change
+france_change <- fertility_data$France$smooth_change
 
-```{r seo-shang-functions}
-trapezoid_inner <- function(f, g, grid) {
-  product <- f * g
-  step <- grid[2] - grid[1]
-  sum((head(product, -1) + tail(product, -1)) * step / 2)
-}
+slovakia_centered <- sweep(
+  slovakia_change,
+  1,
+  rowMeans(slovakia_change),
+  "-"
+)
 
-fourier_scores <- function(x, n_basis = 26) {
-  n_grid <- nrow(x)
-  grid <- seq(0, 1, length.out = n_grid)
-  basis <- matrix(NA_real_, nrow = n_grid, ncol = n_basis)
-
-  for (j in seq_len(n_basis / 2)) {
-    sine <- sqrt(2) * sin(2 * pi * j * grid)
-    cosine <- sqrt(2) * cos(2 * pi * j * grid)
-    basis[, 2 * j - 1] <- sine / sqrt(trapezoid_inner(sine, sine, grid))
-    basis[, 2 * j] <- cosine / sqrt(trapezoid_inner(cosine, cosine, grid))
-  }
-
-  t(t(basis) %*% x * (grid[2] - grid[1]))
-}
-
-bartlett_long_run_sum <- function(x, bandwidth) {
-  omega <- crossprod(x)
-
-  if (bandwidth > 0) {
-    lag_sum <- matrix(0, ncol(x), ncol(x))
-
-    for (lag in seq_len(bandwidth)) {
-      weight <- 1 - lag / bandwidth
-      lag_sum <- lag_sum +
-        weight * crossprod(
-          x[seq_len(nrow(x) - lag), , drop = FALSE],
-          x[(lag + 1):nrow(x), , drop = FALSE]
-        )
-    }
-
-    omega <- omega + lag_sum + t(lag_sum)
-  }
-
-  omega
-}
-
-variance_ratio_statistic <- function(x, denominator, direction = NULL) {
-  bandwidth <- floor(denominator^(1 / 5))
-  partial_sums <- apply(x, 2, cumsum)
-  partial_covariance <- crossprod(partial_sums) / denominator^2
-  long_run_covariance <- bartlett_long_run_sum(x, bandwidth) / denominator
-
-  if (is.null(direction)) {
-    direction <- eigen(partial_covariance, symmetric = TRUE)$vectors[, 1]
-  }
-
-  numerator <- drop(crossprod(direction, partial_covariance %*% direction))
-  denominator_value <- drop(crossprod(direction, long_run_covariance %*% direction))
-
-  list(
-    statistic = numerator / denominator_value,
-    direction = direction,
-    bandwidth = bandwidth
-  )
-}
-
-seo_shang_integer_test <- function(x,
-                                   lower = 0.04467116,
-                                   upper = 2.12588475) {
-  scores <- fourier_scores(x)
-
-  v0_data <- sweep(scores[-1, , drop = FALSE], 2, scores[1, ], "-")
-  v0 <- variance_ratio_statistic(v0_data, denominator = nrow(v0_data))
-
-  v1_statistic <- NA_real_
-  v1_decision <- "Not required"
-
-  if (v0$statistic < lower) {
-    conclusion <- "Fractional: d < 0"
-  } else if (v0$statistic <= upper) {
-    conclusion <- "I(0) is not rejected"
-  } else {
-    v1_data <- scores[-1, , drop = FALSE] - scores[-nrow(scores), , drop = FALSE]
-    v1 <- variance_ratio_statistic(
-      v1_data,
-      denominator = nrow(scores),
-      direction = v0$direction
-    )
-
-    v1_statistic <- v1$statistic
-    v1_decision <- case_when(
-      v1_statistic < lower ~ "Lower-tail rejection",
-      v1_statistic <= upper ~ "Do not reject",
-      TRUE ~ "Upper-tail rejection"
-    )
-
-    conclusion <- case_when(
-      v1_statistic < lower ~ "Fractional: 0 < d < 1",
-      v1_statistic <= upper ~ "I(1) is not rejected",
-      TRUE ~ "Fractional: d > 1"
-    )
-  }
-
-  tibble(
-    V0 = v0$statistic,
-    `V0 decision` = case_when(
-      V0 < lower ~ "Lower-tail rejection",
-      V0 <= upper ~ "Do not reject",
-      TRUE ~ "Upper-tail rejection"
-    ),
-    V1 = v1_statistic,
-    `V1 decision` = v1_decision,
-    conclusion = conclusion,
-    bandwidth = v0$bandwidth
-  )
-}
+france_centered <- sweep(
+  france_change,
+  1,
+  rowMeans(france_change),
+  "-"
+)
 ```
 
-```{r seo-shang-results}
-integer_test_results <- imap_dfr(fertility_data, function(x, country) {
-  seo_shang_integer_test(x$smooth_change) |>
-    mutate(Country = country, .before = 1)
-})
+## Full-sample stationarity checks
 
-integer_test_results |>
-  dplyr::select(-bandwidth) |>
-  kable(
-    digits = 4,
-    caption = "Seo--Shang tests applied to the smoothed fertility-change series"
-  )
+The stationarity checks use all available smoothed fertility-rate changes for each country. The null hypothesis of `ftsa::T_stationary()` is that the functional time series is stationary.
+
+```{r stationarity-tests}
+set.seed(123)
+ftsa::T_stationary(
+  sample = fertility_data$Slovakia$smooth_change,
+  cumulative_var = 0.95,
+  J = 100,
+  MC_rep = 5000,
+  pivotal = TRUE
+)
+
+set.seed(123)
+ftsa::T_stationary(
+  sample = fertility_data$France$smooth_change,
+  cumulative_var = 0.95,
+  J = 100,
+  MC_rep = 5000,
+  pivotal = TRUE
+)
 ```
 
-For Slovakia, (V_0) rejects (I(0)) in the upper tail and (V_1) rejects (I(1)) in the lower tail, giving evidence for (0<d<1). For France, (V_0) rejects (I(0)), but (V_1) does not reject (I(1)).
+## Functional ACF and PACF before fractional differencing
 
-The France result does **not** estimate (d=1). It says only that this sample does not contain enough evidence to reject the integer (I(1)) null. The LPWN procedure below is a separate semiparametric point estimator, so a fractional estimate and a failure to reject (I(1)) can occur together in a finite sample.
+The package-generated fACF and fPACF plots use the complete centered smoothed-change series. Slow decay in the fACF is descriptive evidence of persistent dependence, but the plot alone is not a formal test of long memory.
 
-# Fractional differencing and dependence diagnostics
+```{r facf-fpacf-plots}
+savepdf(
+  "Empirical Study/Empirical Plots/Slovakia_change_facf_fpacf"
+  , width = 12, height = 10, toplines = 0.8
+)
 
-The full-sample estimate in this section is descriptive. The forecast experiment estimates (d) again from the initial training sample, so future test observations are not used to choose (d), (p), or (q).
+v = seq(1:35)
 
-```{r memory-estimation, fig.show='hide'}
-memory_diagnostics <- imap(fertility_data, function(x, country) {
-  centered <- sweep(
-    x$smooth_change,
-    1,
-    rowMeans(x$smooth_change),
-    "-"
-  )
+slovakia_identification <- obtain_FACF(
+  t(slovakia_change),
+  v = v,
+  nlags = 20,
+  ci = 0.95,
+  estimation = "MC",
+  figure = TRUE,
+  ylab = "Female fertility change fACF",
+  yaxt = "n",
+  ylim = c(0,0.5)
+)
 
-  set.seed(123)
-  estimate <- estimate_d_BC_LPWN2(
-    X = centered,
-    m_const = 0.65,
-    R_noise = 0,
-    B = 399,
-    memory_cov_type = "sample"
-  )
+axis(
+  side = 2,
+  at = seq(0, 0.5, by = 0.05),
+  labels = seq(0, 0.5, by = 0.05)
+)
 
-  short_memory <- t(FCVAR::FracDiff(t(centered), d = estimate$d_BC_LPWN2))
-  short_memory <- short_memory[, 21:ncol(short_memory), drop = FALSE]
+dev.off()
 
-  set.seed(123)
-  identification <- fdaACF::FTS_identification(
-    Y = t(short_memory),
-    v = parse_number(rownames(centered)),
-    nlags = min(10, ncol(short_memory) - 2),
-    n_harm = NULL,
-    ci = 0.95,
-    estimation = "MC",
-    figure = FALSE
-  )
 
-  list(
-    d = estimate$d_BC_LPWN2,
-    d_uncorrected = estimate$d_LPWN2,
-    bootstrap_sd = estimate$sd_LPWN2,
-    short_memory = short_memory,
-    identification = identification
-  )
-})
+savepdf(
+  "Empirical Study/Empirical Plots/France_change_facf_fpacf"
+  , width = 12, height = 10, toplines = 0.8
+)
 
-memory_table <- imap_dfr(memory_diagnostics, function(x, country) {
-  tibble(
-    Country = country,
-    `Uncorrected d` = x$d_uncorrected,
-    `Bias-corrected d` = x$d,
-    `Bootstrap SD` = x$bootstrap_sd
-  )
-})
+v = seq(1:35)
 
-memory_table |>
-  kable(
-    digits = 4,
-    caption = "Full-sample LPWN estimates used only for descriptive diagnostics"
-  )
-```
+france_identification <- obtain_FACF(
+  t(france_change),
+  v = v,
+  nlags = 20,
+  ci = 0.95,
+  estimation = "MC",
+  figure = TRUE,
+  ylab = "Female fertility change fACF",
+  yaxt = "n",
+  ylim = c(0,0.5)
+)
 
-## Functional ACF and PACF after fractional differencing
+axis(
+  side = 2,
+  at = seq(0, 0.5, by = 0.05),
+  labels = seq(0, 0.5, by = 0.05)
+)
 
-The fACF and fPACF are computed with `fdaACF::FTS_identification()`. Following the package default, the FPCA dimension is the smallest number of components explaining at least 95% of the variance. Because these diagnostics are based on (L^2) norms, their values are non-negative; the dashed line is the package's upper 95% white-noise bound.
-
-```{r facf-data}
-facf_data <- imap_dfr(memory_diagnostics, function(x, country) {
-  identification <- x$identification
-
-  bind_rows(
-    tibble(
-      lag = seq_along(identification$rho_FACF),
-      value = identification$rho_FACF,
-      diagnostic = "fACF"
-    ),
-    tibble(
-      lag = seq_along(identification$rho_FPACF),
-      value = identification$rho_FPACF,
-      diagnostic = "fPACF"
-    )
-  ) |>
-    mutate(
-      Country = country,
-      bound = identification$Blueline
-    )
-})
-```
-
-```{r facf-plot, fig.width=12, fig.height=7}
-ggplot(facf_data, aes(lag, value)) +
-  geom_hline(yintercept = 0, colour = "grey45") +
-  geom_hline(aes(yintercept = bound), linetype = 2, colour = "#D55E00") +
-  geom_segment(aes(xend = lag, y = 0, yend = value), linewidth = 0.7) +
-  geom_point(size = 2.5) +
-  facet_grid(Country ~ diagnostic, scales = "free_y") +
-  scale_x_continuous(breaks = 1:10) +
-  labs(
-    title = "Dependence after fractional differencing",
-    subtitle = "Dashed line: upper 95% functional white-noise bound",
-    x = "Lag",
-    y = "Functional correlation"
-  )
+dev.off()
 ```
 
 # Expanding-window forecast study
@@ -472,49 +332,45 @@ ggplot(facf_data, aes(lag, value)) +
 ```{r run-models}
 dir.create("Empirical Study/results", showWarnings = FALSE, recursive = TRUE)
 
-run_or_read_pipeline <- function(x, country, rerun = FALSE) {
+forecast_results <- list()
+
+for (country in names(fertility_data)) {
   result_path <- file.path(
     "Empirical Study/results",
     paste0(tolower(country), "_fertility_change_forecast.rds")
   )
 
-  if (!rerun && file.exists(result_path)) {
-    return(readRDS(result_path))
+  if (!params$rerun_models && file.exists(result_path)) {
+    result <- readRDS(result_path)
+  } else {
+    result <- rolling_forecasting_pipeline_compact_order_method(
+      X = fertility_data[[country]]$smooth_change,
+      h_max = 10,
+      train_ratio = 0.6,
+      valid_ratio = 0.2,
+      alpha_set = c(0.2, 0.05),
+      window_types = "expanding",
+      p_max = 5,
+      q_max = 5,
+      Npc = 1,
+      B = 399,
+      far_pve = 0.95,
+      fracdiff_trim = 20,
+      seed = 123,
+      far_benchmark_d = 1,
+      order_selection_method = "both",
+      cv_order_window_type = "expanding",
+      memory_cov_type = "sample"
+    )
+
+    saveRDS(result, result_path)
   }
 
-  result <- rolling_forecasting_pipeline_compact_order_method(
-    X = x,
-    h_max = 10,
-    train_ratio = 0.6,
-    valid_ratio = 0.2,
-    alpha_set = c(0.2, 0.05),
-    window_types = "expanding",
-    p_max = 5,
-    q_max = 5,
-    Npc = 1,
-    B = 399,
-    far_pve = 0.95,
-    fracdiff_trim = 20,
-    seed = 123,
-    far_benchmark_d = 1,
-    order_selection_method = "both",
-    cv_order_window_type = "expanding",
-    memory_cov_type = "sample"
-  )
-
-  saveRDS(result, result_path)
-  result
+  forecast_results[[country]] <- result
 }
 
-forecast_results <- imap(fertility_data, function(x, country) {
-  run_or_read_pipeline(
-    x = x$smooth_change,
-    country = country,
-    rerun = params$rerun_models
-  )
-})
-
-validate_benchmark <- function(result) {
+for (country in names(forecast_results)) {
+  result <- forecast_results[[country]]
   benchmark <- result$error_detail |>
     filter(method == "far") |>
     arrange(order_selection_method, t0)
@@ -522,14 +378,13 @@ validate_benchmark <- function(result) {
   ic <- benchmark |> filter(order_selection_method == "adaptive_ic")
   cv <- benchmark |> filter(order_selection_method == "cv_expanding")
 
-  stopifnot(
-    nrow(ic) == nrow(cv),
-    identical(ic$t0, cv$t0),
-    all(map2_lgl(ic$error, cv$error, ~ isTRUE(all.equal(.x, .y))))
-  )
-}
+  stopifnot(nrow(ic) == nrow(cv))
+  stopifnot(identical(ic$t0, cv$t0))
 
-walk(forecast_results, validate_benchmark)
+  for (i in seq_len(nrow(ic))) {
+    stopifnot(isTRUE(all.equal(ic$error[[i]], cv$error[[i]])))
+  }
+}
 ```
 
 The benchmark appears internally under both order-selection runs, but those two benchmark forecasts are identical. It is therefore retained once and compared with one Functional IC forecast and one CV forecast.
@@ -537,7 +392,10 @@ The benchmark appears internally under both order-selection runs, but those two 
 ## Selected models
 
 ```{r model-table}
-selected_models <- imap_dfr(forecast_results, function(result, country) {
+selected_models_list <- list()
+
+for (country in names(forecast_results)) {
+  result <- forecast_results[[country]]
   selected <- result$model_summary |>
     filter(order_selection_method %in% c("adaptive_ic", "cv_expanding")) |>
     transmute(
@@ -552,7 +410,7 @@ selected_models <- imap_dfr(forecast_results, function(result, country) {
       q = q_est
     )
 
-  bind_rows(
+  selected_models_list[[country]] <- bind_rows(
     tibble(
       Country = country,
       Method = "Benchmark (FARFIMA(1,1,0))",
@@ -566,7 +424,9 @@ selected_models <- imap_dfr(forecast_results, function(result, country) {
       Method = as_method_factor(Method),
       Model = sprintf("FARFIMA(%d, %.4f, %d)", p, d, q)
     )
-})
+}
+
+selected_models <- bind_rows(selected_models_list)
 
 selected_models |>
   arrange(Country, Method) |>
@@ -574,7 +434,7 @@ selected_models |>
   kable(caption = "Models fixed before evaluation on the test sample")
 ```
 
-The estimated training-sample memory parameters are `r sprintf("%.4f", forecast_results$Slovakia$model_summary$d_hat[1])` for Slovakia and `r sprintf("%.4f", forecast_results$France$model_summary$d_hat[1])` for France. These are the approximately 0.8 and 0.4 values used in forecasting.
+The estimated training-sample memory parameters are `r sprintf("%.4f", forecast_results$Slovakia$model_summary$d_hat[1])` for Slovakia and `r sprintf("%.4f", forecast_results$France$model_summary$d_hat[1])` for France. These estimates are obtained from the smoothed fertility-rate changes and are used in forecasting.
 
 ## Metrics
 
@@ -582,18 +442,23 @@ RMSE and MAE pool all ages and available test origins at each horizon. ECP is em
 
 ```{r metric-functions}
 summarise_point_metrics <- function(result) {
-  result$error_detail |>
-    attach_method() |>
-    mutate(horizon_metrics = map(error, function(error_matrix) {
-      tibble(
-        h = seq_len(ncol(error_matrix)),
-        squared_error = colSums(error_matrix^2),
-        absolute_error = colSums(abs(error_matrix)),
-        n = nrow(error_matrix)
-      )
-    })) |>
-    dplyr::select(Method, horizon_metrics) |>
-    unnest(horizon_metrics) |>
+  error_data <- result$error_detail |>
+    attach_method()
+
+  metric_rows <- list()
+
+  for (i in seq_len(nrow(error_data))) {
+    error_matrix <- error_data$error[[i]]
+    metric_rows[[i]] <- tibble(
+      Method = error_data$Method[i],
+      h = seq_len(ncol(error_matrix)),
+      squared_error = colSums(error_matrix^2),
+      absolute_error = colSums(abs(error_matrix)),
+      n = nrow(error_matrix)
+    )
+  }
+
+  bind_rows(metric_rows) |>
     group_by(Method, h) |>
     summarise(
       RMSE = sqrt(sum(squared_error) / sum(n)),
@@ -621,17 +486,37 @@ summarise_wis <- function(point, interval) {
     dplyr::select(Method, h, WIS)
 }
 
-metric_results <- imap(forecast_results, function(result, country) {
+metric_results <- list()
+
+for (country in names(forecast_results)) {
+  result <- forecast_results[[country]]
   point <- summarise_point_metrics(result)
   interval <- summarise_interval_metrics(result)
   wis <- summarise_wis(point, interval)
 
-  list(point = point, interval = interval, wis = wis)
-})
+  metric_results[[country]] <- list(
+    point = point,
+    interval = interval,
+    wis = wis
+  )
+}
 
-point_metrics <- imap_dfr(metric_results, ~ mutate(.x$point, Country = .y, .before = 1))
-interval_metrics <- imap_dfr(metric_results, ~ mutate(.x$interval, Country = .y, .before = 1))
-wis_metrics <- imap_dfr(metric_results, ~ mutate(.x$wis, Country = .y, .before = 1))
+point_metric_list <- list()
+interval_metric_list <- list()
+wis_metric_list <- list()
+
+for (country in names(metric_results)) {
+  point_metric_list[[country]] <- metric_results[[country]]$point |>
+    mutate(Country = country, .before = 1)
+  interval_metric_list[[country]] <- metric_results[[country]]$interval |>
+    mutate(Country = country, .before = 1)
+  wis_metric_list[[country]] <- metric_results[[country]]$wis |>
+    mutate(Country = country, .before = 1)
+}
+
+point_metrics <- bind_rows(point_metric_list)
+interval_metrics <- bind_rows(interval_metric_list)
+wis_metrics <- bind_rows(wis_metric_list)
 
 point_ratios <- point_metrics |>
   left_join(
@@ -670,7 +555,6 @@ The compact table reports raw values and benchmark ratios at horizons 1, 5, and 
 
 ```{r point-wis-table}
 point_ratios |>
-  filter(h %in% c(1, 5, 10)) |>
   left_join(
     wis_ratios |> dplyr::select(Country, Method, h, WIS, `WIS ratio`),
     by = c("Country", "Method", "h")
@@ -686,11 +570,7 @@ point_ratios |>
     WIS,
     `WIS ratio`
   ) |>
-  arrange(Country, h, Method) |>
-  kable(
-    digits = 4,
-    caption = "Point accuracy and WIS at selected horizons"
-  )
+  arrange(Country, h, Method)
 ```
 
 ```{r point-ratio-plot, fig.width=12, fig.height=7}
@@ -753,7 +633,6 @@ ggplot(
 
 ```{r interval-table}
 interval_ratios |>
-  filter(h %in% c(1, 5, 10)) |>
   mutate(`Interval level` = scales::percent(1 - alpha, accuracy = 1)) |>
   dplyr::select(
     Country,
@@ -764,11 +643,6 @@ interval_ratios |>
     CPD,
     Score,
     `Score ratio`
-  ) |>
-  arrange(Country, `Interval level`, h, Method) |>
-  kable(
-    digits = 4,
-    caption = "Coverage and interval score at selected horizons"
   )
 ```
 
@@ -859,8 +733,14 @@ The final comparison uses the most recent test origin for which all ten forecast
 ```{r forecast-band-functions}
 extract_forecast_bands <- function(result, x, country, alpha_show = c(0.20, 0.05)) {
   forecast_rows <- result$error_detail |>
-    attach_method() |>
-    mutate(n_horizons = map_int(error, ncol)) |>
+    attach_method()
+
+  forecast_rows$n_horizons <- integer(nrow(forecast_rows))
+  for (i in seq_len(nrow(forecast_rows))) {
+    forecast_rows$n_horizons[i] <- ncol(forecast_rows$error[[i]])
+  }
+
+  forecast_rows <- forecast_rows |>
     filter(n_horizons >= 10)
 
   latest_t0 <- forecast_rows |>
@@ -872,51 +752,67 @@ extract_forecast_bands <- function(result, x, country, alpha_show = c(0.20, 0.05
 
   calibration_rows <- result$calibration_detail |>
     attach_method() |>
-    filter(map_lgl(alpha, ~ any(abs(.x - alpha_show) < 1e-10)))
+    filter(alpha %in% alpha_show)
 
-  map_dfr(method_levels, function(method_now) {
-    error_matrix <- forecast_rows |>
+  band_rows <- list()
+  row_index <- 0L
+
+  for (method_now in method_levels) {
+    method_forecast <- forecast_rows |>
       filter(t0 == latest_t0, Method == method_now) |>
-      slice(1) |>
-      pull(error) |>
-      pluck(1)
+      slice(1)
 
-    observed <- x[, latest_t0 + seq_len(10), drop = FALSE]
-    forecast <- observed + error_matrix[, seq_len(10), drop = FALSE]
+    error_matrix <- method_forecast$error[[1]]
 
-    calibration_rows |>
+    observed_matrix <- x[, latest_t0 + seq_len(10), drop = FALSE]
+    forecast_matrix <-
+      observed_matrix + error_matrix[, seq_len(10), drop = FALSE]
+
+    method_calibration <- calibration_rows |>
       filter(Method == method_now) |>
-      arrange(desc(alpha)) |>
-      pmap_dfr(function(alpha, gamma, zeta, ...) {
-        map_dfr(seq_len(10), function(h) {
-          half_width <- zeta[h] * as.numeric(gamma[[h]])
-          tibble(
+      arrange(desc(alpha))
+
+    for (i in seq_len(nrow(method_calibration))) {
+      alpha_now <- method_calibration$alpha[i]
+      gamma_now <- method_calibration$gamma[[i]]
+      zeta_now <- method_calibration$zeta[[i]]
+
+      for (h_now in seq_len(10)) {
+        half_width <- zeta_now[h_now] * as.numeric(gamma_now[[h_now]])
+        row_index <- row_index + 1L
+        band_rows[[row_index]] <- tibble(
             Country = country,
             Method = as_method_factor(method_now),
             `Interval level` = factor(
-              scales::percent(1 - alpha, accuracy = 1),
+              scales::percent(1 - alpha_now, accuracy = 1),
               levels = c("95%", "80%")
             ),
-            h = h,
-            panel = paste0("h = ", h),
+            h = h_now,
+            panel = paste0("h = ", h_now),
             age = parse_number(rownames(x)),
-            observed = observed[, h],
-            forecast = forecast[, h],
-            lower = forecast[, h] - half_width,
-            upper = forecast[, h] + half_width
+            observed = observed_matrix[, h_now],
+            forecast = forecast_matrix[, h_now],
+            lower = forecast_matrix[, h_now] - half_width,
+            upper = forecast_matrix[, h_now] + half_width
           )
-        })
-      })
-    })
+      }
+    }
+  }
+
+  bind_rows(band_rows)
 }
 
-forecast_band_data <- imap_dfr(forecast_results, function(result, country) {
-  extract_forecast_bands(
-    result = result,
+forecast_band_list <- list()
+
+for (country in names(forecast_results)) {
+  forecast_band_list[[country]] <- extract_forecast_bands(
+    result = forecast_results[[country]],
     x = fertility_data[[country]]$smooth_change,
     country = country
   )
-}) |>
+}
+
+forecast_band_data <- bind_rows(forecast_band_list) |>
   mutate(
     panel = factor(
       panel,
@@ -925,12 +821,15 @@ forecast_band_data <- imap_dfr(forecast_results, function(result, country) {
   )
 ```
 
+
+
+
 ```{r forecast-band-plots, results='asis', fig.width=13, fig.height=8.5}
 plot_method_levels <- c("Benchmark", "Functional IC", "CV")
 plot_method_palette <- c(
-  "Benchmark" = "purple",
-  "Functional IC" = "red",
-  "CV" = "#0072B2"
+  "Benchmark" = "#1B9E77",
+  "Functional IC" = "#D95F02",
+  "CV" = "#7570B3"
 )
 plot_method_linetypes <- c(
   "Benchmark" = "longdash",
@@ -1008,7 +907,7 @@ for (country_now in names(fertility_data)) {
       guides(
         colour = guide_legend(order = 1, override.aes = list(linewidth = 1.2)),
         linetype = guide_legend(order = 1),
-        fill = guide_legend(order = 2, override.aes = list(alpha = 0.18))
+        fill = guide_legend(order = 2, override.aes = list(alpha = 0.7))
       ) +
       labs(
         title = paste(country_now, interval_now, "fertility-change forecasts"),
@@ -1028,14 +927,12 @@ for (country_now in names(fertility_data)) {
 
 # Interpretation notes
 
-- The Seo--Shang test and LPWN estimator answer different questions. “(I(1)) is not rejected” is not an estimate of (d=1), so it should not replace the reported LPWN estimate.
 - A ratio below one favours Functional IC or CV over the FARFIMA(1,1,0) benchmark. The benchmark ratio is one by construction.
 - WIS is one proper score formed jointly from the point forecast and the two central intervals. The 80% and 95% interval scores are also reported separately.
 - This is an out-of-sample empirical comparison over rolling forecast origins, not a Monte Carlo simulation distribution.
 
 # References
 
-- Seo, W.-K. and Shang, H. L. (2026), [Testing for integer integration in functional time series](https://arxiv.org/abs/2503.23960), and the authors' [official R implementation](https://github.com/wonkiseo86/Testing_Integer_Integration).
 - Mestre, G., Portela, J., Rice, G., Muñoz San Roque, A. and Alonso, E. (2021), [Functional time series model identification and diagnosis by means of auto- and partial autocorrelation analysis](https://doi.org/10.1016/j.csda.2020.107108). The implementation used here is in the [`fdaACF` CRAN package](https://cran.r-project.org/package=fdaACF).
 - Hyndman, R. J. and Shang, H. L. (2010), [Rainbow plots, bagplots, and boxplots for functional data](https://robjhyndman.com/publications/rainbow-fda/).
 - Paparoditis, E. and Shang, H. L. (2021), [Bootstrap prediction bands for functional time series](https://arxiv.org/abs/2004.03971).

@@ -36,6 +36,7 @@ library(tidyr)
 library(vars)
 library(cowplot)
 library(grid)
+library(kableExtra)
 ```
 
 
@@ -144,8 +145,8 @@ pipeline_metrics <- extract_required_metrics_from_compact_order_method(
 ## Analysis 
 
 ```{r}
-unified_forecast_res = readRDS("pipeline_forecast_summary.rds")
-unified_forecast_res_add = readRDS("pipeline_forecast_summary_additional.rds")
+unified_forecast_res = readRDS("Forecasting/pipeline_forecast_summary.rds")
+unified_forecast_res_add = readRDS("Forecasting/pipeline_forecast_summary_additional.rds")
 
 append_one_component <- function(df_main, df_add) {
   if (is.null(df_main))
@@ -1184,7 +1185,7 @@ ggsave(
 ```
 
 
-#### Table of RMSE, MAE, and WIS
+#### Table of RMSE and MAE
 
 ```{r}
 benchmark_res <- unified_forecast_res$ratio_summary %>%
@@ -1229,78 +1230,11 @@ plugin_res <- unified_forecast_res$ratio_summary %>%
     .groups = "drop"
   )
 
-benchmark_wis <- unified_wis %>%
-  filter(
-    n == 1000,
-    window_type == "expanding",
-    h %in% c(1, 5, 10),
-    d_true %in% c(0.2, 0.6, 1, 1.4),
-    method == "far"
-  ) %>%
-  select(
-    p_true,
-    q_true,
-    d_true,
-    ar_strength,
-    ma_strength,
-    h,
-    WIS
-  ) %>%
-  distinct() %>%
-  group_by(p_true, q_true, d_true, h) %>%
-  summarise(WIS = mean(WIS), .groups = "drop") %>%
-  mutate(Method = "Benchmark")
-
-plugin_wis_source <- unified_wis %>%
-  filter(
-    n == 1000,
-    window_type == "expanding",
-    h %in% c(1, 5, 10),
-    d_true %in% c(0.2, 0.6, 1, 1.4),
-    method == "farma"
-  ) %>%
-  mutate(
-    Method = case_when(
-      order_selection_method == "adaptive_ic" ~ "IC",
-      grepl("^cv", order_selection_method) ~ "CV",
-      TRUE ~ NA_character_
-    )
-  )
-
-if (nrow(plugin_wis_source) == 0L || anyNA(plugin_wis_source$Method)) {
-  stop("Unified WIS methods are missing or invalid.", call. = FALSE)
-}
-
-plugin_wis <- plugin_wis_source %>%
-  group_by(p_true, q_true, d_true, h, Method) %>%
-  summarise(WIS = mean(WIS), .groups = "drop")
-
 unified_metrics_long <- bind_rows(benchmark_res, plugin_res)
-unified_wis_long <- bind_rows(benchmark_wis, plugin_wis)
-unified_table_keys <- c("p_true", "q_true", "d_true", "h", "Method")
 
-unified_wis_duplicates <- unified_wis_long %>%
-  group_by(across(all_of(unified_table_keys))) %>%
-  summarise(key_count = n(), .groups = "drop") %>%
-  filter(key_count != 1L)
-
-if (nrow(unified_wis_long) == 0L ||
-    any(!is.finite(unified_wis_long$WIS)) ||
-    nrow(unified_wis_duplicates) > 0L) {
-  stop("Unified WIS table data are missing, invalid, or duplicated.", call. = FALSE)
-}
-
-unified_table_long <- unified_metrics_long %>%
-  left_join(unified_wis_long, by = unified_table_keys)
-
-if (nrow(unified_table_long) != nrow(unified_metrics_long) ||
-    any(!is.finite(unified_table_long$WIS))) {
-  stop("Unified RMSE/MAE rows do not match WIS one-to-one.", call. = FALSE)
-}
-
-unified_table <- unified_table_long %>%
+unified_table <- unified_metrics_long %>%
   mutate(Method = factor(Method, levels = c("Benchmark", "IC", "CV"))) %>%
-  pivot_wider(names_from = Method, values_from = c(RMSE, MAE, WIS)) %>%
+  pivot_wider(names_from = Method, values_from = c(RMSE, MAE)) %>%
   arrange(p_true, q_true, d_true, h) %>%
   mutate(Model = paste0("$(", p_true, ",", q_true, ")$"))
 
@@ -1309,7 +1243,6 @@ unified_table <- unified_table %>%
   mutate(
     min_RMSE = min(c(RMSE_Benchmark, RMSE_IC, RMSE_CV), na.rm = TRUE),
     min_MAE = min(c(MAE_Benchmark, MAE_IC, MAE_CV), na.rm = TRUE),
-    min_WIS = min(c(WIS_Benchmark, WIS_IC, WIS_CV), na.rm = TRUE),
     
     RMSE_Benchmark_print = ifelse(
       isTRUE(all.equal(RMSE_Benchmark, min_RMSE)),
@@ -1353,28 +1286,6 @@ unified_table <- unified_table %>%
       isTRUE(all.equal(MAE_CV, min_MAE)),
       paste0("\\textcolor{blue}{\\textbf{", sprintf("%.4f", MAE_CV), "}}"),
       sprintf("%.4f", MAE_CV)
-    ),
-
-    WIS_Benchmark_print = ifelse(
-      isTRUE(all.equal(WIS_Benchmark, min_WIS)),
-      paste0(
-        "\\textcolor{purple}{\\textbf{",
-        sprintf("%.4f", WIS_Benchmark),
-        "}}"
-      ),
-      sprintf("%.4f", WIS_Benchmark)
-    ),
-
-    WIS_IC_print = ifelse(
-      isTRUE(all.equal(WIS_IC, min_WIS)),
-      paste0("\\textcolor{purple}{\\textbf{", sprintf("%.4f", WIS_IC), "}}"),
-      sprintf("%.4f", WIS_IC)
-    ),
-
-    WIS_CV_print = ifelse(
-      isTRUE(all.equal(WIS_CV, min_WIS)),
-      paste0("\\textcolor{purple}{\\textbf{", sprintf("%.4f", WIS_CV), "}}"),
-      sprintf("%.4f", WIS_CV)
     )
   ) %>%
   ungroup()
@@ -1405,18 +1316,12 @@ unified_table_print <- unified_table %>%
     RMSE_CV_print,
     MAE_Benchmark_print,
     MAE_IC_print,
-    MAE_CV_print,
-    WIS_Benchmark_print,
-    WIS_IC_print,
-    WIS_CV_print
+    MAE_CV_print
   )
 
 names(unified_table_print) <- c("$(p,q)$",
                                 "$d$",
                                 "$h$",
-                                "Bench.",
-                                "IC",
-                                "CV",
                                 "Bench.",
                                 "IC",
                                 "CV",
@@ -1433,7 +1338,6 @@ latex_table <- unified_table_print %>%
     align = c(
       "c", "c", "c",
       "r", "r", "r",
-      "r", "r", "r",
       "r", "r", "r"
     ),
     caption = paste0(
@@ -1441,13 +1345,12 @@ latex_table <- unified_table_print %>%
       "under the expanding-window scheme. Results are averaged over the ",
       "dependence-strength settings. Model orders are reported as $(p,q)$. ",
       "The smallest RMSE within each setting is highlighted in red, ",
-      "the smallest MAE in blue, and the smallest WIS in purple. ",
-      "WIS combines the 80\\% and 95\\% prediction intervals."
+      "and the smallest MAE is highlighted in blue."
     ),
     label = "tab:unified_forecast_expanding"
   ) %>%
   add_header_above(
-    c(" " = 3, "RMSE" = 3, "MAE" = 3, "WIS" = 3),
+    c(" " = 3, "RMSE" = 3, "MAE" = 3),
     escape = FALSE
   ) %>%
   kable_styling(latex_options = "repeat_header", font_size = 8)
@@ -1455,7 +1358,7 @@ latex_table <- unified_table_print %>%
 for (i in seq_len(max(nrow(d_groups) - 1L, 0L))) {
   if (!(d_groups$end[i] %in% model_groups$end)) {
     latex_table <- latex_table %>%
-      row_spec(d_groups$end[i], extra_latex_after = "\\cmidrule(lr){2-12}")
+      row_spec(d_groups$end[i], extra_latex_after = "\\cmidrule(lr){2-9}")
   }
 }
 
@@ -2505,9 +2408,61 @@ p_unified_wis_ratio_expanding <-
 
 
 
-#### Table of interval forecasting scores
+#### Table of interval forecasting scores and WIS
 
 ```{r}
+benchmark_wis <- unified_wis %>%
+  filter(
+    n == 1000,
+    window_type == "expanding",
+    h %in% c(1, 5, 10),
+    d_true %in% c(0.2, 0.6, 1, 1.4),
+    method == "far"
+  ) %>%
+  select(
+    p_true,
+    q_true,
+    d_true,
+    ar_strength,
+    ma_strength,
+    h,
+    WIS
+  ) %>%
+  distinct() %>%
+  group_by(p_true, q_true, d_true, h) %>%
+  summarise(WIS = mean(WIS), .groups = "drop") %>%
+  mutate(Method = "Benchmark")
+
+plugin_wis <- unified_wis %>%
+  filter(
+    n == 1000,
+    window_type == "expanding",
+    h %in% c(1, 5, 10),
+    d_true %in% c(0.2, 0.6, 1, 1.4),
+    method == "farma"
+  ) %>%
+  mutate(
+    Method = case_when(
+      order_selection_method == "adaptive_ic" ~ "IC",
+      grepl("^cv", order_selection_method) ~ "CV",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(Method)) %>%
+  group_by(p_true, q_true, d_true, h, Method) %>%
+  summarise(WIS = mean(WIS), .groups = "drop")
+
+unified_wis_table <- bind_rows(benchmark_wis, plugin_wis) %>%
+  mutate(Method = factor(Method, levels = c("Benchmark", "IC", "CV"))) %>%
+  pivot_wider(names_from = Method, values_from = WIS, names_prefix = "WIS_")
+
+if (nrow(unified_wis_table) == 0L ||
+    any(!is.finite(unified_wis_table$WIS_Benchmark)) ||
+    any(!is.finite(unified_wis_table$WIS_IC)) ||
+    any(!is.finite(unified_wis_table$WIS_CV))) {
+  stop("Unified WIS table data are missing or invalid.", call. = FALSE)
+}
+
 benchmark_interval <- unified_forecast_res$interval_summary %>%
   filter(
     n == 1000,
@@ -2595,6 +2550,10 @@ interval_table <- bind_rows(
     names_from = Method,
     values_from = c(ECP, CPD, Score)
   ) %>%
+  left_join(
+    unified_wis_table,
+    by = c("p_true", "q_true", "d_true", "h")
+  ) %>%
   arrange(
     p_true,
     q_true,
@@ -2616,6 +2575,11 @@ interval_table <- interval_table %>%
 
     min_Score = min(
       c(Score_Benchmark, Score_IC, Score_CV),
+      na.rm = TRUE
+    ),
+
+    min_WIS = min(
+      c(WIS_Benchmark, WIS_IC, WIS_CV),
       na.rm = TRUE
     ),
 
@@ -2681,6 +2645,54 @@ interval_table <- interval_table %>%
         "}}"
       ),
       sprintf("%.3f", Score_CV)
+    ),
+
+    WIS_Benchmark_print = ifelse(
+      isTRUE(all.equal(WIS_Benchmark, min_WIS)),
+      paste0(
+        "\\textcolor{purple}{\\textbf{",
+        sprintf("%.4f", WIS_Benchmark),
+        "}}"
+      ),
+      sprintf("%.4f", WIS_Benchmark)
+    ),
+
+    WIS_IC_print = ifelse(
+      isTRUE(all.equal(WIS_IC, min_WIS)),
+      paste0(
+        "\\textcolor{purple}{\\textbf{",
+        sprintf("%.4f", WIS_IC),
+        "}}"
+      ),
+      sprintf("%.4f", WIS_IC)
+    ),
+
+    WIS_CV_print = ifelse(
+      isTRUE(all.equal(WIS_CV, min_WIS)),
+      paste0(
+        "\\textcolor{purple}{\\textbf{",
+        sprintf("%.4f", WIS_CV),
+        "}}"
+      ),
+      sprintf("%.4f", WIS_CV)
+    ),
+
+    WIS_Benchmark_print = ifelse(
+      CP == "95\\%",
+      WIS_Benchmark_print,
+      ""
+    ),
+
+    WIS_IC_print = ifelse(
+      CP == "95\\%",
+      WIS_IC_print,
+      ""
+    ),
+
+    WIS_CV_print = ifelse(
+      CP == "95\\%",
+      WIS_CV_print,
+      ""
     )
   ) %>%
   ungroup()
@@ -2753,7 +2765,11 @@ interval_table_print <- interval_table %>%
 
     Score_Benchmark_print,
     Score_IC_print,
-    Score_CV_print
+    Score_CV_print,
+
+    WIS_Benchmark_print,
+    WIS_IC_print,
+    WIS_CV_print
   )
 
 names(interval_table_print) <- c(
@@ -2761,6 +2777,10 @@ names(interval_table_print) <- c(
   "$d$",
   "CP",
   "$h$",
+
+  "Bench.",
+  "IC",
+  "CV",
 
   "Bench.",
   "IC",
@@ -2781,18 +2801,15 @@ latex_table <- interval_table_print %>%
     booktabs = TRUE,
     longtable = TRUE,
     escape = FALSE,
-    align = c(
-      "c", "c", "c", "c",
-      "r", "r", "r",
-      "r", "r", "r",
-      "r", "r", "r"
-    ),
+    align = rep("c", 16),
     caption = paste0(
       "Averaged interval forecasting results for the unified setting ",
       "with $T=1000$ under the expanding-window scheme. ",
       "Results are averaged over the dependence-strength settings. ",
       "The smallest CPD within each setting is highlighted in red, ",
-      "and the smallest interval score is highlighted in blue."
+      "the smallest interval score in blue, and the smallest WIS in purple. ",
+      "WIS combines the 80\\% and 95\\% prediction intervals and is reported ",
+      "once per horizon in the 95\\% rows."
     ),
     label = "tab:unified_interval_expanding"
   ) %>%
@@ -2801,7 +2818,8 @@ latex_table <- interval_table_print %>%
       " " = 4,
       "ECP" = 3,
       "CPD" = 3,
-      "Score" = 3
+      "IS" = 3,
+      "WIS" = 3
     ),
     escape = FALSE
   ) %>%
@@ -2810,7 +2828,7 @@ latex_table <- interval_table_print %>%
     font_size = 8
   )
 
-for (i in seq_len(nrow(cp_groups) - 1)) {
+for (i in seq_len(max(nrow(cp_groups) - 1L, 0L))) {
   if (!(cp_groups$end[i] %in% d_groups$end)) {
     latex_table <- latex_table %>%
       row_spec(
@@ -2820,17 +2838,17 @@ for (i in seq_len(nrow(cp_groups) - 1)) {
   }
 }
 
-for (i in seq_len(nrow(d_groups) - 1)) {
+for (i in seq_len(max(nrow(d_groups) - 1L, 0L))) {
   if (!(d_groups$end[i] %in% model_groups$end)) {
     latex_table <- latex_table %>%
       row_spec(
         d_groups$end[i],
-        extra_latex_after = "\\cmidrule(lr){2-13}"
+        extra_latex_after = "\\cmidrule(lr){2-16}"
       )
   }
 }
 
-for (i in seq_len(nrow(model_groups) - 1)) {
+for (i in seq_len(max(nrow(model_groups) - 1L, 0L))) {
   latex_table <- latex_table %>%
     row_spec(
       model_groups$end[i],
@@ -2838,9 +2856,21 @@ for (i in seq_len(nrow(model_groups) - 1)) {
     )
 }
 
-cat("\\setlength\\LTleft{\\fill}\n")
-cat("\\setlength\\LTright{\\fill}\n")
+latex_table <- sub(
+  "\\begin{longtable}[t]",
+  "\\begin{longtable}[c]",
+  latex_table,
+  fixed = TRUE
+)
+
+cat("\\newgeometry{left=1.2cm,right=1.2cm}\n")
+cat("\\begingroup\n")
+cat("\\setlength{\\tabcolsep}{3pt}\n")
+cat("\\setlength{\\LTleft}{\\fill}\n")
+cat("\\setlength{\\LTright}{\\fill}\n")
 cat(latex_table)
+cat("\\endgroup\n")
+cat("\\restoregeometry\n")
 ```
 
 
