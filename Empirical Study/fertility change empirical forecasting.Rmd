@@ -27,11 +27,13 @@ knitr::opts_chunk$set(
   warning = FALSE,
   message = FALSE,
   fig.align = "center",
-  dpi = 300
+  dpi = 1200
 )
 
 library(tidyverse)
 library(readr)
+library(demography)
+library(imputeTS)
 library(longmemo)
 library(FCVAR)
 library(fda)
@@ -47,6 +49,79 @@ library(future.apply)
 library(progressr)
 library(wwntests)
 library(knitr)
+
+savefig <- function(
+  filename,
+  height = 10,
+  width = (1 + sqrt(5)) / 2 * height,
+  type = c("eps", "pdf", "jpg", "png"),
+  pointsize = 10,
+  family = "Helvetica",
+  sublines = 0,
+  toplines = 0,
+  leftlines = 0,
+  res = 300
+) {
+  type <- match.arg(type)
+  filename <- paste0(filename, ".", type)
+
+  if (type == "eps") {
+    postscript(
+      file = filename,
+      horizontal = FALSE,
+      width = width / 2.54,
+      height = height / 2.54,
+      pointsize = pointsize,
+      family = family,
+      onefile = FALSE,
+      print.it = FALSE
+    )
+  } else if (type == "pdf") {
+    pdf(
+      file = filename,
+      width = width / 2.54,
+      height = height / 2.54,
+      pointsize = pointsize,
+      family = family,
+      onefile = TRUE
+    )
+  } else if (type == "jpg") {
+    jpeg(
+      filename = filename,
+      width = width,
+      height = height,
+      res = res,
+      quality = 100,
+      units = "cm"
+    )
+  } else if (type == "png") {
+    png(
+      filename = filename,
+      width = width,
+      height = height,
+      res = res,
+      units = "cm"
+    )
+  }
+
+  par(
+    mgp = c(2.2, 0.45, 0),
+    tcl = -0.4,
+    mar = c(
+      3.2 + sublines + 0.25 * (sublines > 0),
+      3.5 + leftlines,
+      1 + toplines,
+      1
+    ) + 0.1,
+    pch = 1
+  )
+
+  invisible()
+}
+
+savepdf <- function(...) {
+  savefig(..., type = "pdf")
+}
 
 source(file.path(project_root, "Order Selection/Marginal BIC.R"))
 source(file.path(project_root, "Order Selection/CV order selection.R"))
@@ -115,17 +190,60 @@ attach_method <- function(data) {
 }
 ```
 
-# Study design
+```{r}
+plot_FACF_topright <- function(rho,Blueline,ci,...){
+  # Define suitable lwd for plotting
+  nlags <- length(rho)
+  if(nlags <= 30){
+    lwd_1 <- 8
+  }else if(nlags <= 50){
+    lwd_1 <- 6
+  }else if(nlags <= 150){
+    lwd_1 <- 4
+  }else{
+    lwd_1 <- 3
+  }
+  
+  # Check if any additional plotting parameters are present
+  arguments <- list(...)
+  if(!"xlab" %in% names(arguments))  arguments$xlab <- "Lag"
+  if(!"ylab" %in% names(arguments))  arguments$ylab <- "Autocorrelation"
+  if(!"ylim" %in% names(arguments))  arguments$ylim <- c(0,max(rho)*1.5)
+  if(!"lwd"  %in% names(arguments))   arguments$lwd  <- lwd_1
+  if(!"las"  %in% names(arguments))   arguments$las  <- 1
+  if(!"lend" %in% names(arguments))   arguments$lend  <- 2
+  if(!"yaxs" %in% names(arguments))   arguments$yaxs  <- "i"
+  if(!"xaxs" %in% names(arguments))   arguments$xaxs  <- "i"
+  if(!"main" %in% names(arguments))  arguments$main  <- ""
+  if(!"xlim" %in% names(arguments))  arguments$xlim  <- c(0,length(rho)+1)
+  arguments$x = seq(1,length(rho),by = 1)
+  arguments$y = rho
+  arguments$type = "h"
+  
+  do.call(graphics::plot,arguments)
+  grid(lty = 1)
+  do.call(graphics::lines,arguments)
+  graphics::lines(x = arguments$x, 
+                  y = arguments$y,
+                  type = arguments$type, 
+                  col = "lightgrey", 
+                  lwd = arguments$lwd-2, 
+                  lend = 2);
+  blue_color <- "#0073C2FF"
+  graphics::abline(h = Blueline,col = blue_color,lwd = 4, lty = 2)
+  graphics::legend(x = "topright",
+                   legend = c(paste("i.i.d. bound (",ci*100," % conf.)",sep="")),
+                   col = blue_color,
+                   lty = 2,
+                   lwd = 4)
+  box()
+}
+```
 
-Each year is treated as one functional observation: the fertility rate is observed over age. The empirical comparison uses the same settings for Slovakia and France and contains exactly three forecasting methods:
 
-1. **Benchmark:** FARFIMA(1,1,0), implemented as FAR(1) after fixing (d=1);
-2. **Functional IC:** FARFIMA order selected by the proposed functional information criterion;
-3. **CV:** FARFIMA order selected by expanding-window cross-validation.
+# Fertility data
 
-The forecast study uses an expanding window, (h=1,\ldots,10), `p_max = q_max = 5`, `Npc = 1`, `B = 399`, and central 80% and 95% conformal intervals. Code is folded in the HTML report so that the figures and conclusions remain easy to read.
-
-# Data and preprocessing
+## Data and preprocessing
 
 ```{r data-functions}
 repair_smooth <- function(raw, smooth) {
@@ -159,71 +277,11 @@ for (country in names(country_codes)) {
   fertility_data[[country]] <- list(
     raw = raw,
     smooth = smooth,
+    raw_change = fertility_change(raw),
     smooth_change = fertility_change(smooth)
   )
 }
-```
 
-The year-to-year change is
-
-\[
-C_t(u)=\frac{2\{F_{t-1}(u)-F_t(u)\}}
-{F_{t-1}(u)+F_t(u)}.
-\]
-
-A positive value means that fertility at age (u) declined from the preceding year. Seven non-finite values in the supplied smoothed Slovakia matrix are replaced by the corresponding observed values.
-
-## Raw and smoothed rainbow plots
-
-```{r}
-savepdf("France_fertility_smooth_rainbow_plot", width = 12, height = 10, toplines = 0.8)
-
-plot(
-  fts(1:nrow(fertility_data$France$smooth), fertility_data$France$smooth),
-  xlab = "Age",
-  ylab = "Fertility rate"
-)
-
-dev.off()
-
-savepdf("France_fertility_smooth_change_rainbow_plot", width = 12, height = 10, toplines = 0.8)
-
-plot(
-  fts(1:nrow(fertility_data$France$smooth_change), fertility_data$France$smooth_change),
-  xlab = "Age",
-  ylab = "Fertility rate change"
-)
-
-dev.off()
-
-savepdf("Slovakia_fertility_smooth_rainbow_plot", width = 12, height = 10, toplines = 0.8)
-
-plot(
-  fts(1:nrow(fertility_data$Slovakia$smooth), fertility_data$Slovakia$smooth),
-  xlab = "Age",
-  ylab = "Fertility rate"
-)
-
-dev.off()
-
-savepdf("Slovakia_fertility_smooth_change_rainbow_plot", width = 12, height = 10, toplines = 0.8)
-
-plot(
-  fts(1:nrow(fertility_data$Slovakia$smooth_change), fertility_data$Slovakia$smooth_change),
-  xlab = "Age",
-  ylab = "Fertility rate change"
-)
-
-dev.off()
-
-```
-
-
-# Memory estimation and dependence diagnostics
-
-The full-sample estimate in this section is descriptive. The forecast experiment estimates (d) again from the initial training sample, so future test observations are not used to choose (d), (p), or (q). The fACF and fPACF below are calculated from the smoothed fertility-rate changes before fractional differencing.
-
-```{r memory-estimation}
 slovakia_change <- fertility_data$Slovakia$smooth_change
 france_change <- fertility_data$France$smooth_change
 
@@ -242,7 +300,134 @@ france_centered <- sweep(
 )
 ```
 
-## Full-sample stationarity checks
+
+### Raw and smoothed rainbow plots
+
+```{r}
+savepdf("Empirical Study/Empirical Plots/France_fertility_smooth_rainbow_plot", width = 12, height = 10)
+
+plot(
+  fts(1:nrow(fertility_data$France$smooth), fertility_data$France$smooth),
+  xlab = "Age",
+  ylab = "Fertility rate"
+)
+
+dev.off()
+
+savepdf("Empirical Study/Empirical Plots/France_fertility_smooth_change_rainbow_plot", width = 12, height = 10)
+
+plot(
+  fts(1:nrow(fertility_data$France$smooth_change), fertility_data$France$smooth_change),
+  xlab = "Age",
+  ylab = "Increment fertility rate"
+)
+
+dev.off()
+
+savepdf("Empirical Study/Empirical Plots/Slovakia_fertility_smooth_rainbow_plot", width = 12, height = 10)
+
+plot(
+  fts(1:nrow(fertility_data$Slovakia$smooth), fertility_data$Slovakia$smooth),
+  xlab = "Age",
+  ylab = "Fertility rate"
+)
+
+dev.off()
+
+savepdf("Empirical Study/Empirical Plots/Slovakia_fertility_smooth_change_rainbow_plot", width = 12, height = 10)
+
+plot(
+  fts(1:nrow(fertility_data$Slovakia$smooth_change), fertility_data$Slovakia$smooth_change),
+  xlab = "Age",
+  ylab = "Increment fertility rate"
+)
+
+dev.off()
+
+```
+
+
+## FACF and FPACF
+
+
+```{r facf-fpacf-plots}
+savepdf(
+  "Empirical Study/Empirical Plots/Slovakia_fertility_change_facf",
+  width = 12,
+  height = 10,
+  toplines = 0.8
+)
+
+slovakia_identification <- fdaACF::obtain_FACF(
+  t(slovakia_change),
+  v = 1:35,
+  nlags = 20,
+  ci = 0.95,
+  estimation = "MC",
+  figure = FALSE
+)
+
+plot_FACF_topright(
+  rho = slovakia_identification$rho,
+  Blueline = slovakia_identification$Blueline,
+  ci = 0.95,
+  ylab = "Increment fertility fACF",
+  yaxt = "n",
+  ylim = c(0, 0.5)
+)
+
+
+axis(
+  side = 2,
+  at = seq(0, 0.5, by = 0.05),
+  labels = seq(0, 0.5, by = 0.05)
+)
+
+dev.off()
+
+
+savepdf(
+  "Empirical Study/Empirical Plots/France_fertility_change_facf",
+  width = 12,
+  height = 10,
+  toplines = 0.8
+)
+
+france_identification <- fdaACF::obtain_FACF(
+  t(france_change),
+  v = 1:35,
+  nlags = 20,
+  ci = 0.95,
+  estimation = "MC",
+  figure = FALSE
+)
+
+plot_FACF_topright(
+  rho = france_identification$rho,
+  Blueline = france_identification$Blueline,
+  ci = 0.95,
+  ylab = "Increment fertility fACF",
+  yaxt = "n",
+  ylim = c(0, 0.5)
+)
+
+
+axis(
+  side = 2,
+  at = seq(0, 0.5, by = 0.05),
+  labels = seq(0, 0.5, by = 0.05)
+)
+
+axis(
+  side = 2,
+  at = seq(0, 0.5, by = 0.05),
+  labels = seq(0, 0.5, by = 0.05)
+)
+
+dev.off()
+```
+
+## Stationarity checks
 
 The stationarity checks use all available smoothed fertility-rate changes for each country. The null hypothesis of `ftsa::T_stationary()` is that the functional time series is stationary.
 
@@ -266,68 +451,8 @@ ftsa::T_stationary(
 )
 ```
 
-## Functional ACF and PACF before fractional differencing
 
-The package-generated fACF and fPACF plots use the complete centered smoothed-change series. Slow decay in the fACF is descriptive evidence of persistent dependence, but the plot alone is not a formal test of long memory.
-
-```{r facf-fpacf-plots}
-savepdf(
-  "Empirical Study/Empirical Plots/Slovakia_change_facf_fpacf"
-  , width = 12, height = 10, toplines = 0.8
-)
-
-v = seq(1:35)
-
-slovakia_identification <- obtain_FACF(
-  t(slovakia_change),
-  v = v,
-  nlags = 20,
-  ci = 0.95,
-  estimation = "MC",
-  figure = TRUE,
-  ylab = "Female fertility change fACF",
-  yaxt = "n",
-  ylim = c(0,0.5)
-)
-
-axis(
-  side = 2,
-  at = seq(0, 0.5, by = 0.05),
-  labels = seq(0, 0.5, by = 0.05)
-)
-
-dev.off()
-
-
-savepdf(
-  "Empirical Study/Empirical Plots/France_change_facf_fpacf"
-  , width = 12, height = 10, toplines = 0.8
-)
-
-v = seq(1:35)
-
-france_identification <- obtain_FACF(
-  t(france_change),
-  v = v,
-  nlags = 20,
-  ci = 0.95,
-  estimation = "MC",
-  figure = TRUE,
-  ylab = "Female fertility change fACF",
-  yaxt = "n",
-  ylim = c(0,0.5)
-)
-
-axis(
-  side = 2,
-  at = seq(0, 0.5, by = 0.05),
-  labels = seq(0, 0.5, by = 0.05)
-)
-
-dev.off()
-```
-
-# Expanding-window forecast study
+## Forecast
 
 ```{r run-models}
 dir.create("Empirical Study/results", showWarnings = FALSE, recursive = TRUE)
@@ -346,8 +471,8 @@ for (country in names(fertility_data)) {
     result <- rolling_forecasting_pipeline_compact_order_method(
       X = fertility_data[[country]]$smooth_change,
       h_max = 10,
-      train_ratio = 0.6,
-      valid_ratio = 0.2,
+      train_ratio = 0.7,
+      valid_ratio = 0.15,
       alpha_set = c(0.2, 0.05),
       window_types = "expanding",
       p_max = 5,
@@ -387,9 +512,8 @@ for (country in names(forecast_results)) {
 }
 ```
 
-The benchmark appears internally under both order-selection runs, but those two benchmark forecasts are identical. It is therefore retained once and compared with one Functional IC forecast and one CV forecast.
 
-## Selected models
+### Selected models
 
 ```{r model-table}
 selected_models_list <- list()
@@ -434,14 +558,12 @@ selected_models |>
   kable(caption = "Models fixed before evaluation on the test sample")
 ```
 
-The estimated training-sample memory parameters are `r sprintf("%.4f", forecast_results$Slovakia$model_summary$d_hat[1])` for Slovakia and `r sprintf("%.4f", forecast_results$France$model_summary$d_hat[1])` for France. These estimates are obtained from the smoothed fertility-rate changes and are used in forecasting.
 
-## Metrics
+### Metrics
 
-RMSE and MAE pool all ages and available test origins at each horizon. ECP is empirical coverage probability, CPD is its absolute deviation from nominal coverage, and Score is the mean interval score. WIS combines the point forecast with both the 80% and 95% interval scores. Smaller RMSE, MAE, CPD, Score, and WIS are better; ECP should be near its nominal level.
 
 ```{r metric-functions}
-summarise_point_metrics <- function(result) {
+summarise_point_metrics <- function(result, fitted_data, observed_data) {
   error_data <- result$error_detail |>
     attach_method()
 
@@ -449,12 +571,18 @@ summarise_point_metrics <- function(result) {
 
   for (i in seq_len(nrow(error_data))) {
     error_matrix <- error_data$error[[i]]
+    target_columns <- error_data$t0[i] + seq_len(ncol(error_matrix))
+    forecast_matrix <-
+      fitted_data[, target_columns, drop = FALSE] + error_matrix
+    evaluation_error <-
+      forecast_matrix - observed_data[, target_columns, drop = FALSE]
+
     metric_rows[[i]] <- tibble(
       Method = error_data$Method[i],
-      h = seq_len(ncol(error_matrix)),
-      squared_error = colSums(error_matrix^2),
-      absolute_error = colSums(abs(error_matrix)),
-      n = nrow(error_matrix)
+      h = seq_len(ncol(evaluation_error)),
+      squared_error = colSums(evaluation_error^2),
+      absolute_error = colSums(abs(evaluation_error)),
+      n = nrow(evaluation_error)
     )
   }
 
@@ -467,9 +595,65 @@ summarise_point_metrics <- function(result) {
     )
 }
 
-summarise_interval_metrics <- function(result) {
-  result$conformal_summary_detail |>
-    attach_method() |>
+summarise_interval_metrics <- function(result, fitted_data, observed_data) {
+  error_data <- result$error_detail |>
+    attach_method()
+  calibration_data <- result$calibration_detail |>
+    attach_method()
+  metric_rows <- list()
+  row_index <- 0L
+
+  for (i in seq_len(nrow(error_data))) {
+    error_matrix <- error_data$error[[i]]
+    target_columns <- error_data$t0[i] + seq_len(ncol(error_matrix))
+    forecast_matrix <-
+      fitted_data[, target_columns, drop = FALSE] + error_matrix
+    evaluation_error <-
+      forecast_matrix - observed_data[, target_columns, drop = FALSE]
+    method_calibration <- calibration_data |>
+      filter(Method == error_data$Method[i])
+
+    for (j in seq_len(nrow(method_calibration))) {
+      alpha_now <- method_calibration$alpha[j]
+      gamma_now <- method_calibration$gamma[[j]]
+      zeta_now <- method_calibration$zeta[[j]]
+
+      for (h_now in seq_len(ncol(evaluation_error))) {
+        error_now <- evaluation_error[, h_now]
+        half_width <- zeta_now[h_now] * as.numeric(gamma_now[[h_now]])
+        keep <- is.finite(error_now) & is.finite(half_width)
+        error_now <- error_now[keep]
+        half_width <- half_width[keep]
+        interval_score <-
+          2 * half_width +
+          (2 / alpha_now) * pmax(abs(error_now) - half_width, 0)
+
+        row_index <- row_index + 1L
+        metric_rows[[row_index]] <- tibble(
+          Method = error_data$Method[i],
+          alpha = alpha_now,
+          h = h_now,
+          covered = sum(abs(error_now) <= half_width),
+          score_sum = sum(interval_score),
+          n = length(error_now)
+        )
+      }
+    }
+  }
+
+  bind_rows(metric_rows) |>
+    group_by(Method, alpha, h) |>
+    summarise(
+      covered = sum(covered),
+      score_sum = sum(score_sum),
+      n = sum(n),
+      .groups = "drop"
+    ) |>
+    mutate(
+      ECP = covered / n,
+      CPD = abs(ECP - (1 - alpha)),
+      Score = score_sum / n
+    ) |>
     dplyr::select(Method, alpha, h, ECP, CPD, Score)
 }
 
@@ -490,8 +674,16 @@ metric_results <- list()
 
 for (country in names(forecast_results)) {
   result <- forecast_results[[country]]
-  point <- summarise_point_metrics(result)
-  interval <- summarise_interval_metrics(result)
+  point <- summarise_point_metrics(
+    result,
+    fitted_data = fertility_data[[country]]$smooth_change,
+    observed_data = fertility_data[[country]]$raw_change
+  )
+  interval <- summarise_interval_metrics(
+    result,
+    fitted_data = fertility_data[[country]]$smooth_change,
+    observed_data = fertility_data[[country]]$raw_change
+  )
   wis <- summarise_wis(point, interval)
 
   metric_results[[country]] <- list(
@@ -551,7 +743,7 @@ wis_ratios <- wis_metrics |>
 
 ### Point accuracy and WIS
 
-The compact table reports raw values and benchmark ratios at horizons 1, 5, and 10. All ten horizons remain visible in the figures.
+The compact table reports values and benchmark ratios at horizons 1, 5, and 10. RMSE, MAE, ECP, CPD, interval score, and WIS compare the forecasts fitted to the smoothed changes with the corresponding raw fertility-rate changes. All ten horizons remain visible in the figures.
 
 ```{r point-wis-table}
 point_ratios |>
@@ -629,7 +821,7 @@ ggplot(
   )
 ```
 
-### Interval coverage and score
+### ECP and score
 
 ```{r interval-table}
 interval_ratios |>
@@ -726,12 +918,12 @@ ggplot(
   )
 ```
 
-# Point and interval forecasts
+### Forecast plot
 
 The final comparison uses the most recent test origin for which all ten forecast horizons are observed. The 80% and 95% bands are shown in separate figures to avoid overlapping the two coverage levels. Within every panel, the observed curve, all three point forecasts, and the bands for all three methods are compared directly.
 
 ```{r forecast-band-functions}
-extract_forecast_bands <- function(result, x, country, alpha_show = c(0.20, 0.05)) {
+extract_forecast_bands <- function(result, x, observed_x, country, alpha_show = c(0.20, 0.05)) {
   forecast_rows <- result$error_detail |>
     attach_method()
 
@@ -764,9 +956,10 @@ extract_forecast_bands <- function(result, x, country, alpha_show = c(0.20, 0.05
 
     error_matrix <- method_forecast$error[[1]]
 
-    observed_matrix <- x[, latest_t0 + seq_len(10), drop = FALSE]
+    fitted_matrix <- x[, latest_t0 + seq_len(10), drop = FALSE]
+    observed_matrix <- observed_x[, latest_t0 + seq_len(10), drop = FALSE]
     forecast_matrix <-
-      observed_matrix + error_matrix[, seq_len(10), drop = FALSE]
+      fitted_matrix + error_matrix[, seq_len(10), drop = FALSE]
 
     method_calibration <- calibration_rows |>
       filter(Method == method_now) |>
@@ -808,6 +1001,7 @@ for (country in names(forecast_results)) {
   forecast_band_list[[country]] <- extract_forecast_bands(
     result = forecast_results[[country]],
     x = fertility_data[[country]]$smooth_change,
+    observed_x = fertility_data[[country]]$raw_change,
     country = country
   )
 }
@@ -831,15 +1025,683 @@ plot_method_palette <- c(
   "Functional IC" = "#D95F02",
   "CV" = "#7570B3"
 )
-plot_method_linetypes <- c(
-  "Benchmark" = "longdash",
-  "Functional IC" = "solid",
-  "CV" = "dotdash"
-)
+plot_method_linetypes <- c("Benchmark" = "longdash",
+                           "Functional IC" = "solid",
+                           "CV" = "dotdash")
 
 for (country_now in names(fertility_data)) {
   plot_data <- forecast_band_data |>
     filter(Country == country_now) |>
+    mutate(
+      `Plot method` = recode(as.character(Method), `Benchmark (FARFIMA(1,1,0))` = "Benchmark"),
+      `Plot method` = factor(`Plot method`, levels = plot_method_levels)
+    )
+  
+  observed_data <- plot_data |>
+    distinct(panel, h, age, observed)
+  
+  point_data <- plot_data |>
+    distinct(panel, h, age, `Plot method`, forecast)
+  
+  for (interval_now in c("80%", "95%")) {
+    band_data <- plot_data |>
+      filter(`Interval level` == interval_now)
+    
+    forecast_plot <- ggplot() +
+      geom_ribbon(
+        data = band_data,
+        aes(
+          x = age,
+          ymin = lower,
+          ymax = upper,
+          fill = `Plot method`,
+          group = `Plot method`
+        ),
+        alpha = 0.14,
+        colour = NA
+      ) +
+      geom_line(
+        data = observed_data,
+        aes(age, observed),
+        colour = "#111111",
+        linewidth = 1.2
+      ) +
+      geom_line(
+        data = point_data,
+        aes(
+          age,
+          forecast,
+          colour = `Plot method`,
+          linetype = `Plot method`,
+          group = `Plot method`
+        ),
+        linewidth = 1
+      ) +
+      facet_wrap( ~ panel, ncol = 5, scales = "free_y") +
+      scale_colour_manual(name = "Point forecast",
+                          values = plot_method_palette,
+                          drop = FALSE) +
+      scale_linetype_manual(name = "Point forecast",
+                            values = plot_method_linetypes,
+                            drop = FALSE) +
+      scale_fill_manual(
+        name = paste(interval_now, "prediction band"),
+        values = plot_method_palette,
+        drop = FALSE
+      ) +
+      guides(
+        colour = guide_legend(
+          order = 1,
+          override.aes = list(linewidth = 1.2)
+        ),
+        linetype = guide_legend(order = 1),
+        fill = guide_legend(order = 2, override.aes = list(alpha = 0.7))
+      ) +
+      labs(
+        title = paste(country_now, interval_now, "fertility-change forecasts"),
+        subtitle = "Raw observed change: black solid line; benchmark: green long-dashed line",
+        x = "Age",
+        y = "Fertility-rate change"
+      ) +
+      theme(legend.box = "vertical", plot.margin = margin(8, 8, 8, 16))
+    
+    print(forecast_plot)
+  }
+}
+```
+
+
+
+# France mortality analysis
+
+
+## Mortality data and processing
+
+```{r mortality-load-data}
+france_demogdata <- demography::read.demogdata(
+  file = "Empirical Study/Mortality Data/FRATNP_Mx_1x1.txt",
+  popfile = "Empirical Study/Mortality Data/FRATNP_Exposures_1x1.txt",
+  type = "mortality",
+  label = "France"
+) |>
+  demography::extract.ages(0:95)
+
+for (sex in c("female", "male")) {
+  france_demogdata$rate[[sex]][
+    france_demogdata$rate[[sex]] <= 0 |
+      france_demogdata$rate[[sex]] > 1
+  ] <- NA_real_
+
+  for (age in seq_len(nrow(france_demogdata$rate[[sex]]))) {
+    france_demogdata$rate[[sex]][age, ] <- imputeTS::na_interpolation(
+      france_demogdata$rate[[sex]][age, ],
+      option = "linear"
+    )
+  }
+}
+
+france_smoothed <- demography::smooth.demogdata(
+  france_demogdata,
+  method = "mspline",
+  b = 65,
+  weight = TRUE
+)
+
+keep_years <- france_demogdata$year >= 1861
+
+mortality_data <- list(
+  years = france_demogdata$year[keep_years],
+  ages = france_demogdata$age,
+  female_log = log10(
+    france_demogdata$rate$female[, keep_years, drop = FALSE]
+  ),
+  male_log = log10(
+    france_demogdata$rate$male[, keep_years, drop = FALSE]
+  ),
+  female_smooth_log = log10(
+    france_smoothed$rate$female[, keep_years, drop = FALSE]
+  ),
+  male_smooth_log = log10(
+    france_smoothed$rate$male[, keep_years, drop = FALSE]
+  )
+)
+
+mortality_series <- list(
+  Female = mortality_data$female_smooth_log,
+  Male = mortality_data$male_smooth_log
+)
+
+mortality_raw_series <- list(
+  Female = mortality_data$female_log,
+  Male = mortality_data$male_log
+)
+```
+
+
+### Raw and smoothed mortality rainbow plots
+
+```{r mortality-rainbow-plots, fig.width=12, fig.height=9}
+savepdf(
+  "Empirical Study/Empirical Plots/France_mortality_raw_smoothed",
+  width = 20,
+  height = 16,
+  toplines = 0.8
+)
+
+par(
+  mfrow = c(2, 2),
+  mar = c(3.5, 3.8, 2.3, 1)
+)
+
+mortality_ylim <- range(
+  mortality_data$female_log,
+  mortality_data$female_smooth_log,
+  mortality_data$male_log,
+  mortality_data$male_smooth_log,
+  finite = TRUE
+)
+
+plot(
+  fts(mortality_data$ages, mortality_data$female_log),
+  main = "Female: raw",
+  xlab = "Age",
+  ylab = "Log mortality rate",
+  ylim = mortality_ylim
+)
+
+plot(
+  fts(mortality_data$ages, mortality_data$female_smooth_log),
+  main = "Female: smoothed",
+  xlab = "Age",
+  ylab = "Log mortality rate",
+  ylim = mortality_ylim
+)
+
+plot(
+  fts(mortality_data$ages, mortality_data$male_log),
+  main = "Male: raw",
+  xlab = "Age",
+  ylab = "Log mortality rate",
+  ylim = mortality_ylim
+)
+
+plot(
+  fts(mortality_data$ages, mortality_data$male_smooth_log),
+  main = "Male: smoothed",
+  xlab = "Age",
+  ylab = "Log mortality rate",
+  ylim = mortality_ylim
+)
+
+dev.off()
+```
+
+
+## FACF and FPACF
+
+```{r}
+savepdf(
+  "Empirical Study/Empirical Plots/France_female_mortality_facf",
+  width = 12,
+  height = 10,
+  toplines = 0.8
+)
+
+france_female_identification <- fdaACF::obtain_FACF(
+  t(mortality_series$Female),
+  v = 0:95,
+  nlags = 40,
+  ci = 0.95,
+  estimation = "MC",
+  figure = FALSE
+)
+
+plot_FACF_topright(
+  rho = france_female_identification$rho,
+  Blueline = france_female_identification$Blueline,
+  ci = 0.95,
+  ylab = "Female mortality fACF",
+  yaxt = "n",
+  ylim = c(0, 1)
+)
+
+axis(
+  side = 2,
+  at = seq(0, 1, by = 0.2),
+  labels = seq(0, 1, by = 0.2)
+)
+
+dev.off()
+
+
+savepdf(
+  "Empirical Study/Empirical Plots/France_male_mortality_facf",
+  width = 12,
+  height = 10,
+  toplines = 0.8
+)
+
+
+france_male_identification <- fdaACF::obtain_FACF(
+  t(mortality_series$Male),
+  v = 0:95,
+  nlags = 40,
+  ci = 0.95,
+  estimation = "MC",
+  figure = FALSE
+)
+
+
+plot_FACF_topright(
+  rho = france_male_identification$rho,
+  Blueline = france_male_identification$Blueline,
+  ci = 0.95,
+  ylab = "Male mortality fACF",
+  yaxt = "n",
+  ylim = c(0, 1)
+)
+
+axis(
+  side = 2,
+  at = seq(0, 1, by = 0.2),
+  labels = seq(0, 1, by = 0.2)
+)
+
+
+dev.off()
+```
+
+
+## Stationarity checks
+
+The null hypothesis of `ftsa::T_stationary()` is that the functional time series is stationary. The checks below use all 163 smoothed log-mortality curves and are descriptive; the forecast pipeline still estimates its parameters from the initial training sample only.
+
+```{r mortality-stationarity-tests}
+for (sex in names(mortality_series)) {
+  cat("\n", sex, " mortality\n", sep = "")
+
+  set.seed(123)
+  ftsa::T_stationary(
+    sample = mortality_series[[sex]],
+    cumulative_var = 0.95,
+    J = 100,
+    MC_rep = 5000,
+    h = sqrt(ncol(mortality_series[[sex]])),
+    pivotal = TRUE
+  )
+}
+```
+
+## France mortality expanding-window forecast study
+
+The smoothed log-mortality matrices are passed directly to `rolling_forecasting_pipeline_compact_order_method()`. The function creates the 70% training, 15% validation, and 15% test samples internally; no mortality curves are split manually in this Rmd. Point forecast errors are evaluated against the corresponding raw log-mortality curves. The remaining settings are \(h=1,\ldots,10\), `p_max = q_max = 5`, `Npc = 1`, `B = 399`, an expanding window, and central 80% and 95% conformal intervals.
+
+```{r mortality-run-models}
+dir.create("Empirical Study/results", showWarnings = FALSE, recursive = TRUE)
+
+mortality_forecast_results <- list()
+
+for (sex in names(mortality_series)) {
+  result_path <- file.path(
+    "Empirical Study/results",
+    paste0("france_", tolower(sex), "_mortality_forecast.rds")
+  )
+
+  if (!params$rerun_models && file.exists(result_path)) {
+    result <- readRDS(result_path)
+  } else {
+    result <- rolling_forecasting_pipeline_compact_order_method(
+      X = mortality_series[[sex]],
+      h_max = 10,
+      train_ratio = 0.70,
+      valid_ratio = 0.15,
+      alpha_set = c(0.2, 0.05),
+      window_types = "expanding",
+      p_max = 5,
+      q_max = 5,
+      Npc = 1,
+      B = 399,
+      far_pve = 0.95,
+      fracdiff_trim = 20,
+      seed = 123,
+      far_benchmark_d = 1,
+      order_selection_method = "both",
+      cv_order_window_type = "expanding",
+      memory_cov_type = "sample"
+    )
+
+    saveRDS(result, result_path)
+  }
+
+  mortality_forecast_results[[sex]] <- result
+}
+
+for (sex in names(mortality_forecast_results)) {
+  benchmark <- mortality_forecast_results[[sex]]$error_detail |>
+    filter(method == "far") |>
+    arrange(order_selection_method, t0)
+
+  ic <- benchmark |>
+    filter(order_selection_method == "adaptive_ic")
+  cv <- benchmark |>
+    filter(order_selection_method == "cv_expanding")
+
+  stopifnot(nrow(ic) == nrow(cv))
+  stopifnot(identical(ic$t0, cv$t0))
+
+  for (i in seq_len(nrow(ic))) {
+    stopifnot(isTRUE(all.equal(ic$error[[i]], cv$error[[i]])))
+  }
+}
+```
+
+### Selected mortality models
+
+```{r mortality-selected-models}
+mortality_selected_models_list <- list()
+
+for (sex in names(mortality_forecast_results)) {
+  result <- mortality_forecast_results[[sex]]
+  selected <- result$model_summary |>
+    filter(order_selection_method %in% c("adaptive_ic", "cv_expanding")) |>
+    transmute(
+      Sex = sex,
+      Method = recode(
+        order_selection_method,
+        adaptive_ic = "Functional IC",
+        cv_expanding = "CV"
+      ),
+      d = d_hat,
+      p = p_est,
+      q = q_est
+    )
+
+  mortality_selected_models_list[[sex]] <- bind_rows(
+    tibble(
+      Sex = sex,
+      Method = "Benchmark (FARFIMA(1,1,0))",
+      d = 1,
+      p = 1L,
+      q = 0L
+    ),
+    selected
+  ) |>
+    mutate(
+      Method = as_method_factor(Method),
+      Model = sprintf("FARFIMA(%d, %.4f, %d)", p, d, q)
+    )
+}
+
+mortality_selected_models <- bind_rows(mortality_selected_models_list)
+
+mortality_selected_models |>
+  arrange(Sex, Method) |>
+  dplyr::select(Sex, Method, Model) |>
+  kable(caption = "France mortality models fixed before test evaluation")
+```
+
+### Mortality metrics
+
+```{r mortality-metrics}
+mortality_metric_results <- list()
+
+for (sex in names(mortality_forecast_results)) {
+  result <- mortality_forecast_results[[sex]]
+  point <- summarise_point_metrics(
+    result,
+    fitted_data = mortality_series[[sex]],
+    observed_data = mortality_raw_series[[sex]]
+  )
+  interval <- summarise_interval_metrics(
+    result,
+    fitted_data = mortality_series[[sex]],
+    observed_data = mortality_raw_series[[sex]]
+  )
+  wis <- summarise_wis(point, interval)
+
+  mortality_metric_results[[sex]] <- list(
+    point = point,
+    interval = interval,
+    wis = wis
+  )
+}
+
+mortality_point_metrics <- bind_rows(
+  lapply(names(mortality_metric_results), function(sex) {
+    mortality_metric_results[[sex]]$point |>
+      mutate(Sex = sex, .before = 1)
+  })
+)
+
+mortality_interval_metrics <- bind_rows(
+  lapply(names(mortality_metric_results), function(sex) {
+    mortality_metric_results[[sex]]$interval |>
+      mutate(Sex = sex, .before = 1)
+  })
+)
+
+mortality_wis_metrics <- bind_rows(
+  lapply(names(mortality_metric_results), function(sex) {
+    mortality_metric_results[[sex]]$wis |>
+      mutate(Sex = sex, .before = 1)
+  })
+)
+
+mortality_point_ratios <- mortality_point_metrics |>
+  left_join(
+    mortality_point_metrics |>
+      filter(Method == "Benchmark (FARFIMA(1,1,0))") |>
+      dplyr::select(Sex, h, benchmark_RMSE = RMSE, benchmark_MAE = MAE),
+    by = c("Sex", "h")
+  ) |>
+  mutate(
+    `RMSE ratio` = RMSE / benchmark_RMSE,
+    `MAE ratio` = MAE / benchmark_MAE
+  )
+
+mortality_interval_ratios <- mortality_interval_metrics |>
+  left_join(
+    mortality_interval_metrics |>
+      filter(Method == "Benchmark (FARFIMA(1,1,0))") |>
+      dplyr::select(Sex, alpha, h, benchmark_Score = Score),
+    by = c("Sex", "alpha", "h")
+  ) |>
+  mutate(`Score ratio` = Score / benchmark_Score)
+
+mortality_wis_ratios <- mortality_wis_metrics |>
+  left_join(
+    mortality_wis_metrics |>
+      filter(Method == "Benchmark (FARFIMA(1,1,0))") |>
+      dplyr::select(Sex, h, benchmark_WIS = WIS),
+    by = c("Sex", "h")
+  ) |>
+  mutate(`WIS ratio` = WIS / benchmark_WIS)
+```
+
+#### Point accuracy and WIS
+
+```{r mortality-point-wis-table}
+mortality_point_ratios |>
+  left_join(
+    mortality_wis_ratios |>
+      dplyr::select(Sex, Method, h, WIS, `WIS ratio`),
+    by = c("Sex", "Method", "h")
+  ) |>
+  filter(h %in% c(1, 5, 10)) |>
+  dplyr::select(
+    Sex,
+    h,
+    Method,
+    RMSE,
+    `RMSE ratio`,
+    MAE,
+    `MAE ratio`,
+    WIS,
+    `WIS ratio`
+  ) |>
+  arrange(Sex, h, Method) |>
+  kable(
+    digits = 4,
+    caption = "France mortality point accuracy and WIS at selected horizons"
+  )
+```
+
+```{r mortality-point-ratio-plot, fig.width=12, fig.height=7}
+mortality_point_ratio_plot_data <- mortality_point_ratios |>
+  filter(Method != "Benchmark (FARFIMA(1,1,0))") |>
+  dplyr::select(Sex, Method, h, `RMSE ratio`, `MAE ratio`) |>
+  pivot_longer(ends_with("ratio"), names_to = "Metric", values_to = "Ratio")
+
+ggplot(
+  mortality_point_ratio_plot_data,
+  aes(h, Ratio, colour = Method, shape = Method, linetype = Method)
+) +
+  geom_hline(yintercept = 1, linetype = 3, colour = "grey50") +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2.6) +
+  facet_grid(Sex ~ Metric, scales = "free_y") +
+  scale_colour_manual(values = method_palette, breaks = c("Functional IC", "CV")) +
+  scale_shape_manual(values = method_shapes, breaks = c("Functional IC", "CV")) +
+  scale_linetype_manual(values = method_linetypes, breaks = c("Functional IC", "CV")) +
+  scale_x_continuous(breaks = 1:10) +
+  labs(
+    title = "France mortality point forecast error ratios",
+    subtitle = "The horizontal line at one is the benchmark; lower values are better",
+    x = "Forecast horizon h",
+    y = "Ratio"
+  )
+```
+
+```{r mortality-wis-ratio-plot, fig.width=12, fig.height=5.5}
+ggplot(
+  mortality_wis_ratios |>
+    filter(Method != "Benchmark (FARFIMA(1,1,0))"),
+  aes(h, `WIS ratio`, colour = Method, shape = Method, linetype = Method)
+) +
+  geom_hline(yintercept = 1, linetype = 3, colour = "grey50") +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2.6) +
+  facet_wrap(~ Sex, nrow = 1, scales = "free_y") +
+  scale_colour_manual(values = method_palette, breaks = c("Functional IC", "CV")) +
+  scale_shape_manual(values = method_shapes, breaks = c("Functional IC", "CV")) +
+  scale_linetype_manual(values = method_linetypes, breaks = c("Functional IC", "CV")) +
+  scale_x_continuous(breaks = 1:10) +
+  labs(
+    title = "France mortality weighted interval score ratios",
+    subtitle = "The horizontal line at one is the benchmark; lower values are better",
+    x = "Forecast horizon h",
+    y = "WIS ratio"
+  )
+```
+
+#### Interval coverage and score
+
+```{r mortality-interval-table}
+mortality_interval_ratios |>
+  mutate(`Interval level` = scales::percent(1 - alpha, accuracy = 1)) |>
+  filter(h %in% c(1, 5, 10)) |>
+  dplyr::select(
+    Sex,
+    `Interval level`,
+    h,
+    Method,
+    ECP,
+    CPD,
+    Score,
+    `Score ratio`
+  ) |>
+  arrange(Sex, `Interval level`, h, Method) |>
+  kable(
+    digits = 4,
+    caption = "France mortality interval results at selected horizons"
+  )
+```
+
+```{r mortality-coverage-plot, fig.width=12, fig.height=7}
+mortality_coverage_plot_data <- mortality_interval_metrics |>
+  mutate(
+    `Interval level` = factor(
+      scales::percent(1 - alpha, accuracy = 1),
+      levels = c("80%", "95%")
+    )
+  )
+
+ggplot(
+  mortality_coverage_plot_data,
+  aes(h, ECP, colour = Method, shape = Method, linetype = Method)
+) +
+  geom_hline(aes(yintercept = 1 - alpha), colour = "grey50", linetype = 3) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2.4) +
+  facet_grid(Sex ~ `Interval level`) +
+  scale_colour_manual(values = method_palette, drop = FALSE) +
+  scale_shape_manual(values = method_shapes, drop = FALSE) +
+  scale_linetype_manual(values = method_linetypes, drop = FALSE) +
+  scale_x_continuous(breaks = 1:10) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title = "France mortality empirical coverage probability",
+    subtitle = "Horizontal lines show the nominal coverage",
+    x = "Forecast horizon h",
+    y = "ECP"
+  )
+```
+
+```{r mortality-score-ratio-plot, fig.width=12, fig.height=7}
+mortality_score_ratio_plot_data <- mortality_interval_ratios |>
+  filter(Method != "Benchmark (FARFIMA(1,1,0))") |>
+  mutate(
+    `Interval level` = factor(
+      scales::percent(1 - alpha, accuracy = 1),
+      levels = c("80%", "95%")
+    )
+  )
+
+ggplot(
+  mortality_score_ratio_plot_data,
+  aes(h, `Score ratio`, colour = Method, shape = Method, linetype = Method)
+) +
+  geom_hline(yintercept = 1, linetype = 3, colour = "grey50") +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2.4) +
+  facet_grid(Sex ~ `Interval level`, scales = "free_y") +
+  scale_colour_manual(values = method_palette, breaks = c("Functional IC", "CV")) +
+  scale_shape_manual(values = method_shapes, breaks = c("Functional IC", "CV")) +
+  scale_linetype_manual(values = method_linetypes, breaks = c("Functional IC", "CV")) +
+  scale_x_continuous(breaks = 1:10) +
+  labs(
+    title = "France mortality interval score ratios",
+    subtitle = "The horizontal line at one is the benchmark; lower values are better",
+    x = "Forecast horizon h",
+    y = "Score ratio"
+  )
+```
+
+### France mortality point and interval forecasts
+
+The figures use the latest test origin for which all ten horizons are observed. Each panel compares the raw observed log-mortality curve with the three point forecasts fitted to smoothed log mortality. The method-specific 80% and 95% bands are shown in separate figures.
+
+```{r mortality-forecast-band-data}
+mortality_forecast_band_list <- list()
+
+for (sex in names(mortality_forecast_results)) {
+  mortality_forecast_band_list[[sex]] <- extract_forecast_bands(
+    result = mortality_forecast_results[[sex]],
+    x = mortality_series[[sex]],
+    observed_x = mortality_raw_series[[sex]],
+    country = sex
+  )
+}
+
+mortality_forecast_band_data <- bind_rows(mortality_forecast_band_list) |>
+  rename(Sex = Country) |>
+  mutate(panel = factor(panel, levels = paste0("h = ", 1:10)))
+```
+
+```{r mortality-forecast-band-plots, results='asis', fig.width=13, fig.height=8.5}
+for (sex_now in names(mortality_forecast_results)) {
+  plot_data <- mortality_forecast_band_data |>
+    filter(Sex == sex_now) |>
     mutate(
       `Plot method` = recode(
         as.character(Method),
@@ -858,7 +1720,7 @@ for (country_now in names(fertility_data)) {
     band_data <- plot_data |>
       filter(`Interval level` == interval_now)
 
-    forecast_plot <- ggplot() +
+    mortality_forecast_plot <- ggplot() +
       geom_ribbon(
         data = band_data,
         aes(
@@ -910,29 +1772,18 @@ for (country_now in names(fertility_data)) {
         fill = guide_legend(order = 2, override.aes = list(alpha = 0.7))
       ) +
       labs(
-        title = paste(country_now, interval_now, "fertility-change forecasts"),
-        subtitle = "Observed: black solid line; benchmark: purple long-dashed line",
+        title = paste("France", tolower(sex_now), interval_now, "mortality forecasts"),
+        subtitle = "Raw observed curve: black solid line; forecasts and bands use matching method colours",
         x = "Age",
-        y = "Fertility-rate change"
+        y = "Log mortality rate"
       ) +
       theme(
         legend.box = "vertical",
         plot.margin = margin(8, 8, 8, 16)
       )
 
-    print(forecast_plot)
+    print(mortality_forecast_plot)
   }
 }
 ```
 
-# Interpretation notes
-
-- A ratio below one favours Functional IC or CV over the FARFIMA(1,1,0) benchmark. The benchmark ratio is one by construction.
-- WIS is one proper score formed jointly from the point forecast and the two central intervals. The 80% and 95% interval scores are also reported separately.
-- This is an out-of-sample empirical comparison over rolling forecast origins, not a Monte Carlo simulation distribution.
-
-# References
-
-- Mestre, G., Portela, J., Rice, G., Muñoz San Roque, A. and Alonso, E. (2021), [Functional time series model identification and diagnosis by means of auto- and partial autocorrelation analysis](https://doi.org/10.1016/j.csda.2020.107108). The implementation used here is in the [`fdaACF` CRAN package](https://cran.r-project.org/package=fdaACF).
-- Hyndman, R. J. and Shang, H. L. (2010), [Rainbow plots, bagplots, and boxplots for functional data](https://robjhyndman.com/publications/rainbow-fda/).
-- Paparoditis, E. and Shang, H. L. (2021), [Bootstrap prediction bands for functional time series](https://arxiv.org/abs/2004.03971).
