@@ -30,7 +30,12 @@ library(FCVAR)
 
 
 ```{r}
-setwd("~/Desktop/FTS Order Selection")
+project_root <- if (file.exists("Order Selection/Order selection AIC simulation.Rmd")) {
+  normalizePath(".")
+} else {
+  normalizePath("..")
+}
+setwd(project_root)
 
 source("DGP non-stationary FTS/sim_FARMA.R")
 source("Operator Estimation/Kuenzer FARMA Estimation.R")
@@ -38,6 +43,7 @@ source("Order Selection/Marginal BIC.R")
 source("Order Selection/WN test order selection.R")
 source("Order Selection/Sim order selection.R")
 source("Fractional Differencing/Covariance Matrix.R")
+source("Forecasting/forecast_plot_helpers.R")
 
 ```
 
@@ -48,7 +54,7 @@ source("Fractional Differencing/Covariance Matrix.R")
 ## Simulation Setting
 
 
-```{r}
+```{r, eval=FALSE}
 
 library(dplyr)
 library(tidyr)
@@ -496,21 +502,21 @@ order_analysis_long <- bind_rows(
 order_acc_summary <- make_order_accuracy_summary(order_analysis_long)
 
 method_cols <- c(
-  "Box Jenkins" = "#4DAF7C",
+  "Box Jenkins" = "#1B9E77",
   "Functional IC" = "#D95F02",
   "Auto Functional IC" = "#7570B3"
 )
 
 method_ltys <- c(
-  "Box Jenkins" = "solid",
-  "Functional IC" = "dashed",
-  "Auto Functional IC" = "dotted"
+  "Box Jenkins" = "longdash",
+  "Functional IC" = "solid",
+  "Auto Functional IC" = "dashed"
 )
 
 method_shapes <- c(
-  "Box Jenkins" = 16,
-  "Functional IC" = 17,
-  "Auto Functional IC" = 15
+  "Box Jenkins" = 15,
+  "Functional IC" = 16,
+  "Auto Functional IC" = 17
 )
 ```
 
@@ -586,102 +592,19 @@ plot_order_accuracy_one_model <- function(df, model_show, title = NULL, show_leg
 }
 
 make_method_legend <- function() {
-  
-  legend_df <- data.frame(
-    method = factor(
-      c(
-        "Box Jenkins",
-        "Functional IC",
-        "Auto Functional IC"
-      ),
-      levels = c(
-        "Box Jenkins",
-        "Functional IC",
-        "Auto Functional IC"
-      )
-    ),
-    
-    group_center = c(
-      1.6,
-      4.3,
-      7.0
-    ),
-    
-    y = 1
-  ) %>%
-    mutate(
-      x = group_center - 0.65,
-      xend = group_center - 0.10,
-      x_text = group_center + 0.15
-    )
-  
-  ggplot(legend_df) +
-    annotate(
-      "text",
-      x = 0,
-      y = 1,
-      label = "Method",
-      hjust = 0,
-      size = 6,
-      fontface = "bold"
-    ) +
-    geom_segment(
-      aes(
-        x = x,
-        xend = xend,
-        y = y,
-        yend = y,
-        colour = method,
-        linetype = method
-      ),
-      linewidth = 0.9,
-      show.legend = FALSE
-    ) +
-    geom_point(
-      aes(
-        x = xend,
-        y = y,
-        colour = method,
-        shape = method
-      ),
-      size = 3,
-      show.legend = FALSE
-    ) +
-    geom_text(
-      aes(
-        x = x_text,
-        y = y,
-        label = method
-      ),
-      hjust = 0,
-      size = 5.5
-    ) +
-    scale_colour_manual(
-      values = method_cols
-    ) +
-    scale_linetype_manual(
-      values = method_ltys
-    ) +
-    scale_shape_manual(
-      values = method_shapes
-    ) +
-    coord_cartesian(
-      xlim = c(0, 9.2),
-      ylim = c(0.85, 1.15),
-      clip = "off"
-    ) +
-    theme_void(
-      base_size = 16
-    ) +
-    theme(
-      legend.position = "none",
-      plot.margin = margin(
-        0,
-        0,
-        0,
-        0
-      )
-    )
+  methods <- c("Box Jenkins", "Functional IC", "Auto Functional IC")
+
+  make_custom_method_legend(
+    methods = methods,
+    colours = method_cols,
+    linetypes = method_ltys,
+    shapes = method_shapes,
+    labels = methods,
+    title = "Order selection",
+    base_size = 18,
+    point_size = 3,
+    line_width = 0.9
+  )
 }
 
 combine_four_models_shared_axes <- function(
@@ -766,7 +689,7 @@ p_far_fma <- combine_four_models_shared_axes(
   df = order_acc_summary,
   models = c("(1,0)", "(2,0)", "(0,1)", "(0,2)"),
   titles = c("FARMA(1,0)", "FARMA(2,0)", "FARMA(0,1)", "FARMA(0,2)"),
-  file_name = "order_accuracy_far_fma_2x2.pdf",
+  file_name = "Sim Plots/order_accuracy_far_fma_2x2.pdf",
   width = 16,
   height = 12
 )
@@ -775,7 +698,7 @@ p_farma <- combine_four_models_shared_axes(
   df = order_acc_summary,
   models = c("(1,1)", "(2,1)", "(1,2)", "(2,2)"),
   titles = c("FARMA(1,1)", "FARMA(2,1)", "FARMA(1,2)", "FARMA(2,2)"),
-  file_name = "order_accuracy_farma_2x2.pdf",
+  file_name = "Sim Plots/order_accuracy_farma_2x2.pdf",
   width = 16,
   height = 12
 )
@@ -1208,5 +1131,3 @@ penalty_by_T <- order_select_comapre$IC_detail %>%
 
 penalty_by_T
 ```
-
-

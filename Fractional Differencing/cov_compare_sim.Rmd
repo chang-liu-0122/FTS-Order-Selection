@@ -19,10 +19,16 @@ library(FCVAR)
 
 
 ```{r}
-setwd("~/Desktop/FTS Order Selection")
+project_root <- if (file.exists("Fractional Differencing/cov_compare_sim.Rmd")) {
+  normalizePath(".")
+} else {
+  normalizePath("..")
+}
+setwd(project_root)
 source("DGP non-stationary FTS/sim_FARMA.R")
 source("Fractional Differencing/local.W.R")
 source("Fractional Differencing/Covariance Matrix.R")
+source("Forecasting/forecast_plot_helpers.R")
 ```
 
 # Comparison across covariance matrix with local whittling and DFA estimator (both long memory and non-stationary)
@@ -31,7 +37,7 @@ source("Fractional Differencing/Covariance Matrix.R")
 
 ### Simulation
 
-```{r, warning=FALSE}
+```{r, warning=FALSE, eval=FALSE}
 # Simulation grid
 T_vals  <- c(500, 1000, 2000)
 ar_vals <- c(0.2, 0.5, 0.8)
@@ -144,9 +150,9 @@ plot_cov_compare_FAR <- function(df, estimator_keep, title = NULL) {
   
   df_plot <- bind_rows(
     df_sub %>%
-      select(T_label, ar_label, d_true, d_label, mean_d_est, operator),
+      dplyr::select(T_label, ar_label, d_true, d_label, mean_d_est, operator),
     ref_df %>%
-      select(T_label, ar_label, d_true, d_label, mean_d_est, operator)
+      dplyr::select(T_label, ar_label, d_true, d_label, mean_d_est, operator)
   ) %>%
     mutate(
       T_label = factor(T_label, levels = T_levels),
@@ -195,6 +201,7 @@ plot_cov_compare_FAR <- function(df, estimator_keep, title = NULL) {
         "LRC-LRS" = 15
       )
     ) +
+    scale_x_discrete(labels = function(x) sub("^T==", "", x)) +
     labs(
       title = title,
       x = "Sample size T",
@@ -204,9 +211,9 @@ plot_cov_compare_FAR <- function(df, estimator_keep, title = NULL) {
       shape = "Covariance operator"
     ) +
     theme_classic(base_size = 18) +
+    paper_legend_theme(base_size = 18, position = "top") +
     theme(
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      legend.position = "top"
+      axis.text.x = element_text(angle = 0, hjust = 0.5)
     )
 }
 ```
@@ -241,7 +248,7 @@ ggsave(
 
 ### Simulation
 
-```{r, warning=FALSE}
+```{r, warning=FALSE, eval=FALSE}
 # Simulation grid
 T_vals  <- c(500, 1000, 2000)
 ar_vals <- c(0.2, 0.5, 0.8)
@@ -361,7 +368,7 @@ plot_cov_compare_FARMA <- function(df, estimator_keep, ma_keep, title = NULL) {
   
   df_plot <- bind_rows(
     df_sub %>%
-      select(
+      dplyr::select(
         T_label,
         ar_label,
         d_true,
@@ -370,7 +377,7 @@ plot_cov_compare_FARMA <- function(df, estimator_keep, ma_keep, title = NULL) {
         operator
       ),
     ref_df %>%
-      select(
+      dplyr::select(
         T_label,
         ar_label,
         d_true,
@@ -426,6 +433,7 @@ plot_cov_compare_FARMA <- function(df, estimator_keep, ma_keep, title = NULL) {
         "LRC-LRS" = 15
       )
     ) +
+    scale_x_discrete(labels = function(x) sub("^T==", "", x)) +
     labs(
       title = title,
       x = "Sample size T",
@@ -435,9 +443,9 @@ plot_cov_compare_FARMA <- function(df, estimator_keep, ma_keep, title = NULL) {
       shape = "Covariance operator"
     ) +
     theme_classic(base_size = 18) +
+    paper_legend_theme(base_size = 18, position = "top") +
     theme(
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      legend.position = "top"
+      axis.text.x = element_text(angle = 0, hjust = 0.5)
     )
 }
 ```
@@ -519,4 +527,3 @@ ggsave(
   width = 10, height = 6, dpi = 1200
 )
 ```
-

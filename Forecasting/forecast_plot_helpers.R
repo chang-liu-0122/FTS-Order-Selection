@@ -9,60 +9,284 @@ ratio_axis_limits <- function(values, reference = 1, padding = 0.06) {
   c(value_range[1] - pad, value_range[2] + pad)
 }
 
+make_interval_plot_summary <- function(df, alpha_show = 0.05) {
+  T_name <- if ("T" %in% names(df)) {
+    "T"
+  } else if ("n" %in% names(df)) {
+    "n"
+  } else {
+    stop("Need a `T` or `n` column.")
+  }
+
+  if (!is.null(alpha_show) && !"alpha" %in% names(df)) {
+    stop("Cannot find the `alpha` column.")
+  }
+
+  if (!"method" %in% names(df)) {
+    stop("Cannot find the `method` column.")
+  }
+
+  df_use <- df
+
+  if (!is.null(alpha_show)) {
+    df_use <- dplyr::filter(
+      df_use,
+      abs(as.numeric(.data$alpha) - alpha_show) < 1e-10
+    )
+  }
+
+  dplyr::mutate(
+    df_use,
+    T_value = as.numeric(.data[[T_name]]),
+    T_factor = factor(T_value, levels = sort(unique(T_value))),
+    h = as.numeric(.data$h),
+    ar_strength = as.numeric(.data$ar_strength),
+    ma_strength = as.numeric(.data$ma_strength),
+    p_true = as.integer(.data$p_true),
+    q_true = as.integer(.data$q_true),
+    method = dplyr::case_when(
+      stringr::str_detect(tolower(as.character(.data$method)), "farma") ~ "farma",
+      stringr::str_detect(
+        tolower(as.character(.data$method)),
+        "far\\(1\\)|far1|far_1|far$"
+      ) ~ "far",
+      TRUE ~ tolower(as.character(.data$method))
+    ),
+    window_type = dplyr::case_when(
+      stringr::str_detect(tolower(as.character(.data$window_type)), "exp") ~ "Expanding",
+      stringr::str_detect(tolower(as.character(.data$window_type)), "fix") ~ "Fixed",
+      TRUE ~ as.character(.data$window_type)
+    ),
+    window_type = factor(window_type, levels = c("Expanding", "Fixed")),
+    model = paste0("(", p_true, ",", q_true, ")"),
+    model = factor(model, levels = c("(1,0)", "(0,1)", "(2,0)", "(1,1)")),
+    model_label = dplyr::case_when(
+      model == "(1,0)" ~ "FARFIMA(1,d,0)",
+      model == "(0,1)" ~ "FARFIMA(0,d,1)",
+      model == "(2,0)" ~ "FARFIMA(2,d,0)",
+      model == "(1,1)" ~ "FARFIMA(1,d,1)",
+      TRUE ~ as.character(model)
+    ),
+    psi_label = factor(
+      paste0("psi==", ar_strength),
+      levels = paste0("psi==", sort(unique(ar_strength)))
+    ),
+    nu_label = factor(
+      paste0("nu==", ma_strength),
+      levels = paste0("nu==", sort(unique(ma_strength)))
+    )
+  )
+}
+
+# Shared visual specification for paper figures.  The long benchmark label is
+# retained for joins, while the legend displays the compact model name.
+paper_method_colours <- c(
+  "Benchmark (FARFIMA(1,1,0))" = "#1B9E77",
+  "FARFIMA(1,1,0)" = "#1B9E77",
+  "Functional IC" = "#D95F02",
+  "CV" = "#7570B3"
+)
+
+paper_method_linetypes <- c(
+  "Benchmark (FARFIMA(1,1,0))" = "longdash",
+  "FARFIMA(1,1,0)" = "longdash",
+  "Functional IC" = "solid",
+  "CV" = "dashed"
+)
+
+paper_method_shapes <- c(
+  "Benchmark (FARFIMA(1,1,0))" = 15,
+  "FARFIMA(1,1,0)" = 15,
+  "Functional IC" = 16,
+  "CV" = 17
+)
+
+paper_method_labels <- c(
+  "Benchmark (FARFIMA(1,1,0))" = "FARFIMA(1,1,0)",
+  "FARFIMA(1,1,0)" = "FARFIMA(1,1,0)",
+  "Functional IC" = "Functional IC",
+  "CV" = "CV"
+)
+
+paper_legend_theme <- function(base_size = 15, position = "top") {
+  ggplot2::theme(
+    legend.position = position,
+    legend.direction = "horizontal",
+    legend.box = "horizontal",
+    legend.justification = "center",
+    legend.box.just = "center",
+    legend.title = ggplot2::element_text(
+      size = base_size * 0.92,
+      face = "bold"
+    ),
+    legend.text = ggplot2::element_text(size = base_size * 0.88),
+    legend.key.width = grid::unit(1.65, "lines"),
+    legend.key.height = grid::unit(0.85, "lines"),
+    legend.spacing.x = grid::unit(0.55, "lines"),
+    legend.spacing.y = grid::unit(0.10, "lines"),
+    legend.margin = ggplot2::margin(0, 0, 0, 0),
+    legend.box.margin = ggplot2::margin(0, 0, 0, 0)
+  )
+}
+
+paper_plot_theme <- function(base_size = 17, legend_position = "top") {
+  ggplot2::theme_classic(base_size = base_size) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_blank(),
+      plot.subtitle = ggplot2::element_blank(),
+      panel.border = ggplot2::element_rect(
+        colour = "grey25",
+        fill = NA,
+        linewidth = 0.5
+      ),
+      strip.background = ggplot2::element_rect(
+        fill = "grey92",
+        colour = "grey25",
+        linewidth = 0.5
+      ),
+      strip.text = ggplot2::element_text(
+        face = "bold",
+        size = base_size * 0.88
+      ),
+      axis.title = ggplot2::element_text(size = base_size),
+      axis.text = ggplot2::element_text(size = base_size * 0.82),
+      panel.grid = ggplot2::element_blank(),
+      plot.margin = ggplot2::margin(5, 5, 5, 5)
+    ) +
+    paper_legend_theme(base_size, legend_position)
+}
+
+paper_method_scales <- function(methods,
+                                title = "Forecasting method",
+                                drop = FALSE) {
+  methods <- as.character(methods)
+
+  list(
+    ggplot2::scale_colour_manual(
+      name = title,
+      values = paper_method_colours,
+      breaks = methods,
+      labels = paper_method_labels[methods],
+      drop = drop
+    ),
+    ggplot2::scale_linetype_manual(
+      name = title,
+      values = paper_method_linetypes,
+      breaks = methods,
+      labels = paper_method_labels[methods],
+      drop = drop
+    ),
+    ggplot2::scale_shape_manual(
+      name = title,
+      values = paper_method_shapes,
+      breaks = methods,
+      labels = paper_method_labels[methods],
+      drop = drop
+    )
+  )
+}
+
+make_custom_method_legend <- function(methods,
+                                      colours,
+                                      linetypes,
+                                      shapes,
+                                      labels = methods,
+                                      title = "Forecasting method",
+                                      base_size = 21,
+                                      point_size = 4.5,
+                                      line_width = 1.5) {
+  methods <- as.character(methods)
+  labels <- stats::setNames(as.character(labels), methods)
+  legend_data <- expand.grid(
+    method = factor(methods, levels = methods),
+    x = c(1, 2),
+    KEEP.OUT.ATTRS = FALSE
+  )
+  legend_data$y <- as.numeric(legend_data$method)
+
+  legend_plot <- ggplot2::ggplot(
+    legend_data,
+    ggplot2::aes(
+      x = x,
+      y = y,
+      colour = method,
+      linetype = method,
+      shape = method,
+      group = method
+    )
+  ) +
+    ggplot2::geom_line(linewidth = line_width) +
+    ggplot2::geom_point(size = point_size) +
+    ggplot2::scale_colour_manual(
+      name = title,
+      values = colours,
+      breaks = methods,
+      labels = labels[methods],
+      drop = FALSE
+    ) +
+    ggplot2::scale_linetype_manual(
+      name = title,
+      values = linetypes,
+      breaks = methods,
+      labels = labels[methods],
+      drop = FALSE
+    ) +
+    ggplot2::scale_shape_manual(
+      name = title,
+      values = shapes,
+      breaks = methods,
+      labels = labels[methods],
+      drop = FALSE
+    ) +
+    ggplot2::guides(
+      colour = ggplot2::guide_legend(
+        nrow = 1,
+        byrow = TRUE,
+        override.aes = list(linewidth = line_width, size = point_size)
+      ),
+      linetype = "none",
+      shape = "none"
+    ) +
+    ggplot2::theme_void(base_size = base_size) +
+    paper_legend_theme(base_size = base_size, position = "right")
+
+  cowplot::get_legend(legend_plot)
+}
+
+make_method_legend <- function(methods = c("Functional IC", "CV"),
+                               title = "Forecasting method",
+                               base_size = 21,
+                               point_size = 4.5,
+                               line_width = 1.5) {
+  make_custom_method_legend(
+    methods = methods,
+    colours = paper_method_colours,
+    linetypes = paper_method_linetypes,
+    shapes = paper_method_shapes,
+    labels = paper_method_labels[methods],
+    title = title,
+    base_size = base_size,
+    point_size = point_size,
+    line_width = line_width
+  )
+}
+
 make_two_method_legend <- function(method_cols,
                                    method_linetypes,
                                    method_shapes,
-                                   title = "Order selection",
+                                   title = "Forecasting method",
                                    title_size = 7.5,
                                    text_size = 7,
                                    point_size = 4.5,
                                    line_width = 1.5,
                                    base_size = 25) {
-  methods <- c("Functional IC", "CV")
-  legend_data <- tibble::tibble(
-    method = factor(methods, levels = methods),
-    x_start = c(3.5, 7.3),
-    x_end = c(4.0, 7.8),
-    x_text = c(4.3, 8.1),
-    y = 1
+  make_method_legend(
+    methods = c("Functional IC", "CV"),
+    title = title,
+    base_size = text_size * ggplot2::.pt,
+    point_size = point_size,
+    line_width = line_width
   )
-
-  ggplot2::ggplot(legend_data) +
-    ggplot2::annotate(
-      "text", x = 0, y = 1, label = title, hjust = 0,
-      size = title_size, fontface = "bold"
-    ) +
-    ggplot2::geom_segment(
-      ggplot2::aes(
-        x = x_start, xend = x_end, y = y, yend = y,
-        colour = method, linetype = method
-      ),
-      linewidth = line_width,
-      show.legend = FALSE
-    ) +
-    ggplot2::geom_point(
-      ggplot2::aes(x = x_end, y = y, colour = method, shape = method),
-      size = point_size,
-      show.legend = FALSE
-    ) +
-    ggplot2::geom_text(
-      ggplot2::aes(x = x_text, y = y, label = method),
-      hjust = 0,
-      size = text_size
-    ) +
-    ggplot2::scale_colour_manual(values = method_cols) +
-    ggplot2::scale_linetype_manual(values = method_linetypes) +
-    ggplot2::scale_shape_manual(values = method_shapes) +
-    ggplot2::coord_cartesian(
-      xlim = c(0, 11),
-      ylim = c(0.85, 1.15),
-      clip = "off"
-    ) +
-    ggplot2::theme_void(base_size = base_size) +
-    ggplot2::theme(
-      legend.position = "none",
-      plot.margin = ggplot2::margin(0, 0, 0, 0)
-    )
 }
 
 assemble_ratio_panel_grid <- function(df,

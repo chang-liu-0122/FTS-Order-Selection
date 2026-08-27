@@ -457,125 +457,35 @@ make_forecast_legend_manual <- function(df) {
     mutate(T_factor = droplevels(T_factor),
            window_type = droplevels(window_type))
 
-  T_levels <- levels(df_use$T_factor)
-  W_levels <- levels(df_use$window_type)
-
-  x_title <- 0
-  x_item_start <- 3.0
-  item_gap <- 3.7
-
-  line_length <- 0.75
-  text_gap <- 0.45
-
-  T_df <- tibble(
-    T_factor = factor(T_levels, levels = T_levels),
-
-    x_symbol = x_item_start +
-      line_length +
-      (seq_along(T_levels) - 1) *
-      item_gap,
-
-    x_text = x_item_start +
-      line_length +
-      text_gap +
-      (seq_along(T_levels) - 1) *
-      item_gap,
-
-    y = 1.00,
-
-    label = paste0("T = ", T_levels)
-  )
-
-  W_df <- tibble(
-    window_type = factor(W_levels, levels = W_levels),
-
-    x_start = x_item_start +
-      (seq_along(W_levels) - 1) *
-      item_gap,
-
-    x_end = x_item_start +
-      line_length +
-      (seq_along(W_levels) - 1) *
-      item_gap,
-
-    x_text = x_item_start +
-      line_length +
-      text_gap +
-      (seq_along(W_levels) - 1) *
-      item_gap,
-
-    y = 0.55,
-    label = W_levels
-  )
-
-  xmax <- max(c(T_df$x_text + 1.8, W_df$x_text + 2.2), na.rm = TRUE)
-
-  ggplot() +
-    annotate(
-      "text",
-      x = x_title,
-      y = 1.00,
-      label = "Sample size T",
-      hjust = 0,
-      size = legend_title_size,
-      fontface = "bold"
+  legend_plot <- ggplot(
+    df_use,
+    aes(
+      x = h,
+      y = 1,
+      colour = T_factor,
+      linetype = window_type,
+      shape = window_type,
+      group = interaction(T_factor, window_type)
+    )
+  ) +
+    geom_line(linewidth = legend_line_width) +
+    geom_point(size = legend_point_size) +
+    scale_colour_manual(values = get_T_cols(df_use), drop = FALSE) +
+    scale_linetype_manual(values = get_window_ltys(df_use), drop = FALSE) +
+    scale_shape_manual(values = get_window_shapes(df_use), drop = FALSE) +
+    labs(colour = "Sample size T", linetype = "Window", shape = "Window") +
+    guides(
+      colour = guide_legend(order = 1, nrow = 1, byrow = TRUE),
+      linetype = guide_legend(order = 2, nrow = 1, byrow = TRUE),
+      shape = "none"
     ) +
-    geom_point(
-      data = T_df,
-      aes(x = x_symbol, y = y, colour = T_factor),
-      size = legend_point_size,
-      show.legend = FALSE
-    ) +
-    geom_text(
-      data = T_df,
-      aes(x = x_text, y = y, label = label),
-      hjust = 0,
-      size = legend_text_size
-    ) +
-    annotate(
-      "text",
-      x = x_title,
-      y = 0.55,
-      label = "Window",
-      hjust = 0,
-      size = legend_title_size,
-      fontface = "bold"
-    ) +
-    geom_segment(
-      data = W_df,
-      aes(
-        x = x_start,
-        xend = x_end,
-        y = y,
-        yend = y,
-        linetype = window_type
-      ),
-      linewidth = legend_line_width,
-      colour = "black",
-      show.legend = FALSE
-    ) +
-    geom_point(
-      data = W_df,
-      aes(x = x_end, y = y, shape = window_type),
-      size = legend_point_size,
-      colour = "black",
-      show.legend = FALSE
-    ) +
-    geom_text(
-      data = W_df,
-      aes(x = x_text, y = y, label = label),
-      hjust = 0,
-      size = legend_text_size
-    ) +
-    scale_colour_manual(values = get_T_cols(df_use)) +
-    scale_linetype_manual(values = get_window_ltys(df_use)) +
-    scale_shape_manual(values = get_window_shapes(df_use)) +
-    coord_cartesian(xlim = c(0, xmax),
-                    ylim = c(0.35, 1.15),
-                    clip = "off") +
-    theme_void(base_size = plot_base_size) +
-    theme(legend.position = "none",
-          plot.margin = margin(0, 0, 0, 0))
+    theme_void(base_size = legend_text_size * ggplot2::.pt) +
+    paper_legend_theme(
+      base_size = legend_text_size * ggplot2::.pt,
+      position = "right"
+    )
+
+  cowplot::get_legend(legend_plot)
 }
 
 make_forecast_legend_manual_core <- make_forecast_legend_manual
@@ -627,7 +537,7 @@ p_forecast_ratio <- combine_four_forecast_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "Forecasting/Sim Plots Ideal/forecast_rmse_ratio_2x2.pdf",
+  file_name = "Sim Plots Ideal/forecast_rmse_ratio_2x2.pdf",
   width = 16,
   height = 14
 )
@@ -880,23 +790,6 @@ make_ecp_summary <- function(df,
     )
 }
 
-make_ecp_summary <- function(df,
-                             alpha_show = 0.05,
-                             window_show = "Expanding") {
-  make_interval_plot_summary(df = df, alpha_show = alpha_show) %>%
-    filter(method %in% c("far", "farma"), window_type == window_show) %>%
-    mutate(
-      method = factor(
-        method,
-        levels = c("far", "farma"),
-        labels = c("FAR(1)", "FARFIMA")
-      ),
-
-      T_factor = droplevels(T_factor),
-      window_type = droplevels(window_type)
-    )
-}
-
 method_cols_ecp <- c("FARFIMA(1,1,0)" = "#1B9E77",
                      "Plugin forecast" = "#D95F02")
 
@@ -928,133 +821,35 @@ make_ecp_legend_no_window <- function(df) {
   df_use <- df %>%
     mutate(method = droplevels(method), T_factor = droplevels(T_factor))
 
-  method_levels <- levels(df_use$method)
-  T_levels <- levels(df_use$T_factor)
-
-  x_title <- 0
-  x_item_start <- 3.0
-  item_gap <- 3.9
-  line_length <- 0.75
-  text_gap <- 0.45
-
-  method_df <- tibble(
-    method = factor(method_levels, levels = method_levels),
-
-    x_start = x_item_start +
-      (seq_along(method_levels) - 1) * item_gap,
-
-    x_end = x_item_start +
-      line_length +
-      (seq_along(method_levels) - 1) * item_gap,
-
-    x_text = x_item_start +
-      line_length +
-      text_gap +
-      (seq_along(method_levels) - 1) * item_gap,
-
-    y = 1.00,
-    label = method_levels
-  )
-
-  T_df <- tibble(
-    T_factor = factor(T_levels, levels = T_levels),
-
-    x_start = x_item_start +
-      (seq_along(T_levels) - 1) * item_gap,
-
-    x_end = x_item_start +
-      line_length +
-      (seq_along(T_levels) - 1) * item_gap,
-
-    x_text = x_item_start +
-      line_length +
-      text_gap +
-      (seq_along(T_levels) - 1) * item_gap,
-
-    y = 0.55,
-    label = paste0("T = ", T_levels)
-  )
-
-  xmax <- max(c(method_df$x_text + 2.2, T_df$x_text + 1.8), na.rm = TRUE)
-
-  ggplot() +
-    annotate(
-      "text",
-      x = x_title,
-      y = 1.00,
-      label = "Method",
-      hjust = 0,
-      size = legend_title_size,
-      fontface = "bold"
+  legend_plot <- ggplot(
+    df_use,
+    aes(
+      x = h,
+      y = ECP,
+      colour = method,
+      linetype = T_factor,
+      shape = T_factor,
+      group = interaction(method, T_factor)
+    )
+  ) +
+    geom_line(linewidth = legend_line_width) +
+    geom_point(size = legend_point_size) +
+    scale_colour_manual(values = method_cols_ecp, drop = FALSE) +
+    scale_shape_manual(values = get_T_shapes_ecp(df_use), drop = FALSE) +
+    scale_linetype_manual(values = get_T_ltys_ecp(df_use), drop = FALSE) +
+    labs(colour = "Forecasting method", linetype = "Sample size T", shape = "Sample size T") +
+    guides(
+      colour = guide_legend(order = 1, nrow = 1, byrow = TRUE),
+      linetype = guide_legend(order = 2, nrow = 1, byrow = TRUE),
+      shape = "none"
     ) +
-    geom_segment(
-      data = method_df,
-      aes(
-        x = x_start,
-        xend = x_end,
-        y = y,
-        yend = y,
-        colour = method
-      ),
-      linewidth = legend_line_width,
-      show.legend = FALSE
-    ) +
-    geom_point(
-      data = method_df,
-      aes(x = x_end, y = y, colour = method),
-      size = legend_point_size,
-      show.legend = FALSE
-    ) +
-    geom_text(
-      data = method_df,
-      aes(x = x_text, y = y, label = label),
-      hjust = 0,
-      size = legend_text_size
-    ) +
-    annotate(
-      "text",
-      x = x_title,
-      y = 0.55,
-      label = "Sample size T",
-      hjust = 0,
-      size = legend_title_size,
-      fontface = "bold"
-    ) +
-    geom_segment(
-      data = T_df,
-      aes(
-        x = x_start,
-        xend = x_end,
-        y = y,
-        yend = y,
-        linetype = T_factor
-      ),
-      linewidth = legend_line_width,
-      colour = "black",
-      show.legend = FALSE
-    ) +
-    geom_point(
-      data = T_df,
-      aes(x = x_end, y = y, shape = T_factor),
-      size = legend_point_size,
-      colour = "black",
-      show.legend = FALSE
-    ) +
-    geom_text(
-      data = T_df,
-      aes(x = x_text, y = y, label = label),
-      hjust = 0,
-      size = legend_text_size
-    ) +
-    scale_colour_manual(values = method_cols_ecp) +
-    scale_shape_manual(values = get_T_shapes_ecp(df_use)) +
-    scale_linetype_manual(values = get_T_ltys_ecp(df_use)) +
-    coord_cartesian(xlim = c(0, xmax),
-                    ylim = c(0.35, 1.15),
-                    clip = "off") +
-    theme_void(base_size = plot_base_size) +
-    theme(legend.position = "none",
-          plot.margin = margin(0, 0, 0, 0))
+    theme_void(base_size = legend_text_size * ggplot2::.pt) +
+    paper_legend_theme(
+      base_size = legend_text_size * ggplot2::.pt,
+      position = "right"
+    )
+
+  cowplot::get_legend(legend_plot)
 }
 
 plot_ecp_one_model <- function(df,
@@ -1297,7 +1092,7 @@ p_ecp_95_expanding <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.05,
-  file_name = "forecast_ecp_95_expanding_2x2.pdf",
+  file_name = "Sim Plots Ideal/forecast_ecp_95_expanding_2x2.pdf",
   width = 16,
   height = 14,
   y_limits = c(0.85, 1.00)
@@ -1319,7 +1114,7 @@ p_ecp_80_expanding <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.20,
-  file_name = "forecast_ecp_80_expanding_2x2.pdf",
+  file_name = "Sim Plots Ideal/forecast_ecp_80_expanding_2x2.pdf",
   width = 16,
   height = 14,
   y_limits = c(0.7, 0.9)
@@ -1341,7 +1136,7 @@ p_ecp_95_fixed <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.05,
-  file_name = "forecast_ecp_95_fixed_2x2.pdf",
+  file_name = "Sim Plots Ideal/forecast_ecp_95_fixed_2x2.pdf",
   width = 16,
   height = 14,
   y_limits = c(0.85, 1.00)
@@ -1363,7 +1158,7 @@ p_ecp_80_fixed <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.20,
-  file_name = "forecast_ecp_80_fixed_2x2.pdf",
+  file_name = "Sim Plots Ideal/forecast_ecp_80_fixed_2x2.pdf",
   width = 16,
   height = 14,
   y_limits = c(0.7, 0.9)
@@ -1390,80 +1185,6 @@ reference_line_width <- 0.8
 axis_tick_width <- 0.6
 panel_spacing_size <- 0.75
 plot_margin_size <- 5
-
-make_interval_plot_summary <- function(df, alpha_show = 0.05) {
-  T_name <- if ("T" %in% names(df)) {
-    "T"
-  } else if ("n" %in% names(df)) {
-    "n"
-  } else {
-    stop("Need a `T` or `n` column.")
-  }
-
-  if (!is.null(alpha_show) && !"alpha" %in% names(df)) {
-    stop("Cannot find the `alpha` column.")
-  }
-
-  if (!"method" %in% names(df)) {
-    stop("Cannot find the `method` column.")
-  }
-
-  df_use <- df
-
-  if (!is.null(alpha_show)) {
-    df_use <- df_use %>%
-      filter(abs(as.numeric(alpha) - alpha_show) < 1e-10)
-  }
-
-  df_use %>%
-    mutate(
-      T_value = as.numeric(.data[[T_name]]),
-      T_factor = factor(T_value, levels = sort(unique(T_value))),
-      h = as.numeric(h),
-      ar_strength = as.numeric(ar_strength),
-      ma_strength = as.numeric(ma_strength),
-      p_true = as.integer(p_true),
-      q_true = as.integer(q_true),
-
-      method = case_when(
-        str_detect(tolower(as.character(method)), "farma") ~ "farma",
-
-        str_detect(tolower(as.character(method)), "far\\(1\\)|far1|far_1|far$") ~ "far",
-
-        TRUE ~ tolower(as.character(method))
-      ),
-
-      window_type = case_when(
-        str_detect(tolower(as.character(window_type)), "exp") ~ "Expanding",
-
-        str_detect(tolower(as.character(window_type)), "fix") ~ "Fixed",
-
-        TRUE ~ as.character(window_type)
-      ),
-
-      window_type = factor(window_type, levels = c("Expanding", "Fixed")),
-
-      model = paste0("(", p_true, ",", q_true, ")"),
-
-      model = factor(model, levels = c("(1,0)", "(0,1)", "(2,0)", "(1,1)")),
-
-      model_label = case_when(
-        model == "(1,0)" ~ "FARFIMA(1,d,0)",
-        model == "(0,1)" ~ "FARFIMA(0,d,1)",
-        model == "(2,0)" ~ "FARFIMA(2,d,0)",
-        model == "(1,1)" ~ "FARFIMA(1,d,1)",
-        TRUE ~ as.character(model)
-      ),
-
-      psi_label = factor(paste0("psi==", ar_strength), levels = paste0("psi==", sort(
-        unique(ar_strength)
-      ))),
-
-      nu_label = factor(paste0("nu==", ma_strength), levels = paste0("nu==", sort(
-        unique(ma_strength)
-      )))
-    )
-}
 
 get_T_cols <- function(df) {
   T_levels <- levels(droplevels(df$T_factor))
@@ -1591,7 +1312,7 @@ p_score_ratio_95 <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "Forecasting/Sim Plots Ideal/forecast_score_ratio_95_2x2.pdf",
+  file_name = "Sim Plots Ideal/forecast_score_ratio_95_2x2.pdf",
   width = 16,
   height = 14,
   y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"
@@ -1612,7 +1333,7 @@ p_score_ratio_80 <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "Forecasting/Sim Plots Ideal/forecast_score_ratio_80_2x2.pdf",
+  file_name = "Sim Plots Ideal/forecast_score_ratio_80_2x2.pdf",
   width = 16,
   height = 14,
   y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"
@@ -1737,7 +1458,7 @@ p_wis_ratio <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "Forecasting/Sim Plots Ideal/forecast_wis_ratio_2x2.pdf",
+  file_name = "Sim Plots Ideal/forecast_wis_ratio_2x2.pdf",
   width = 16,
   height = 14,
   y_axis_label = "WIS ratio to FARFIMA(1,1,0)"

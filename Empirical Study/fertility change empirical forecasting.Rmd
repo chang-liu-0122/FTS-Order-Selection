@@ -134,6 +134,7 @@ source(file.path(project_root, "Operator Estimation/Kuenzer FARMA Estimation.R")
 source(file.path(project_root, "Forecasting/Forecasting Helper.R"))
 source(file.path(project_root, "Forecasting/forecast_compare_sim.R"))
 source(file.path(project_root, "Forecasting/unified_compare_sim.R"))
+source(file.path(project_root, "Forecasting/forecast_plot_helpers.R"))
 
 method_levels <- c(
   "Benchmark (FARFIMA(1,1,0))",
@@ -148,38 +149,18 @@ method_key <- tribble(
   "cv_expanding", "farma", "CV"
 )
 
-method_palette <- c(
-  "Benchmark (FARFIMA(1,1,0))" = "#1B9E77",
-  "Functional IC" = "#D95F02",
-  "CV" = "#7570B3"
-)
+method_palette <- paper_method_colours
 
-method_shapes <- c(
-  "Benchmark (FARFIMA(1,1,0))" = 15,
-  "Functional IC" = 16,
-  "CV" = 17
-)
+method_shapes <- paper_method_shapes
 
-method_linetypes <- c(
-  "Benchmark (FARFIMA(1,1,0))" = "longdash",
-  "Functional IC" = "solid",
-  "CV" = "dotdash"
-)
+method_linetypes <- paper_method_linetypes
 
-method_plot_labels <- c(
-  "Benchmark (FARFIMA(1,1,0))" = "FARFIMA(1,1,0)",
-  "Functional IC" = "Functional IC",
-  "CV" = "CV"
-)
+method_plot_labels <- paper_method_labels
 
-paper_theme <- theme_bw(base_size = 15) +
+paper_theme <- paper_plot_theme(base_size = 17, legend_position = "top") +
   theme(
-    plot.title = element_text(face = "bold", size = 16),
-    plot.subtitle = element_text(size = 12, colour = "grey30"),
-    strip.text = element_text(face = "bold", size = 12),
-    legend.position = "bottom",
-    legend.title = element_text(face = "bold"),
-    panel.grid.minor = element_blank()
+    plot.title = element_blank(),
+    plot.subtitle = element_blank()
   )
 
 theme_set(paper_theme)
