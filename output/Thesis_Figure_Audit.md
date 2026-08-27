@@ -11,27 +11,29 @@
 3. **Ideal forecasting:** retain:
    - `forecast_rmse_ratio_2x2.pdf`
    - `forecast_ecp_80_expanding_2x2.pdf`
+   - `forecast_score_ratio_80_2x2.pdf`
    - `forecast_wis_ratio_2x2.pdf`
 4. **Unified forecasting:** retain:
    - `unified_d_estimation_T1000.pdf`
    - `unified_order_accuracy_T1000_2x2.pdf`
    - `unified_rmse_ratio_balanced_expanding_T1000_2x2.pdf`
    - `unified_ecp_80_expanding_2x2.pdf`
+   - `unified_score_ratio_80_expanding_2x2.pdf`
    - `unified_wis_ratio_expanding_2x2.pdf`
 
 Use only \(T=1000\) and the expanding-window scheme in the main ideal and unified forecasting figures. This makes the two studies directly comparable and keeps each retained figure focused on estimation of \(d\), recovery of \((p,q)\), point accuracy, coverage, or overall probabilistic accuracy. The other sample sizes and window schemes remain useful as robustness results.
 
-## Recommended appendix figures
+## Interactive supplementary figures
 
-Move the following supporting or overlapping results to the appendix:
+The following supporting settings are stored under `Forecasting/Shiny App Plots` for a future Shiny application:
 
 - separate LW and DFA memory-estimation figures after the combined main-text figure is created;
 - ideal-study figures for \(T=500\) and fixed-window forecasting;
 - FARFIMA\((1,d,1)\) memory-estimation figures for \(\nu=0.2\) and \(\nu=0.8\);
 - all \(T=500\) unified figures;
 - fixed-window ideal coverage figures;
-- all 95% ECP figures, with the main text noting that they lead to the same qualitative conclusion as the 80% results;
-- separate 80% and 95% interval-score-ratio figures, because WIS already summarises point error and both interval levels;
+- all 95% empirical-coverage-probability figures;
+- 95% interval-score-ratio figures;
 - full raw-value tables if chapter length is a concern. Their formatting can remain unchanged.
 
 ## Empirical chapter

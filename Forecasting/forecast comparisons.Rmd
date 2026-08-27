@@ -56,6 +56,16 @@ source("Forecasting/Forecasting Helper.R")
 source("Forecasting/forecast_compare_sim.R")
 source("Forecasting/unified_compare_sim.R")
 source("Forecasting/forecast_plot_helpers.R")
+
+ideal_plot_dir <- file.path(project_root, "Forecasting", "Sim Plots Ideal")
+shiny_ideal_plot_dir <- file.path(
+  project_root,
+  "Forecasting",
+  "Shiny App Plots",
+  "Ideal"
+)
+dir.create(ideal_plot_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(shiny_ideal_plot_dir, recursive = TRUE, showWarnings = FALSE)
 ```
 
 
@@ -308,6 +318,10 @@ make_forecast_ratio_summary <- function(df,
 get_T_cols <- function(df) {
   T_levels <- levels(droplevels(df$T_factor))
 
+  if (length(T_levels) == 1L) {
+    return(setNames("#D95F02", T_levels))
+  }
+
   cols <- c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E")
 
   if (length(T_levels) > length(cols)) {
@@ -503,7 +517,8 @@ make_forecast_legend_manual <- function(df) {
     theme(
       legend.box = "vertical",
       legend.direction = "horizontal",
-      legend.box.just = "center"
+      legend.box.just = "left",
+      legend.justification = "left"
     )
 
   get_visible_legend(legend_plot)
@@ -520,7 +535,7 @@ combine_four_forecast_models_shared_axes <- function(
     height = 12,
     y_limits = NULL,
     value_col = "rmse_ratio",
-    y_axis_label = "RMSE ratio to FARFIMA(1,1,0)") {
+    y_axis_label = "Root mean squared error ratio to FARFIMA(1,1,0)") {
   assemble_ratio_panel_grid(
     df = df,
     models = models,
@@ -566,7 +581,7 @@ p_forecast_ratio <- combine_four_forecast_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "Forecasting/Sim Plots Ideal/forecast_rmse_ratio_2x2.pdf",
+  file_name = file.path(ideal_plot_dir, "forecast_rmse_ratio_2x2.pdf"),
   width = 16,
   height = 14
 )
@@ -905,7 +920,8 @@ make_ecp_legend_no_window <- function(df) {
     theme(
       legend.box = "vertical",
       legend.direction = "horizontal",
-      legend.box.just = "center"
+      legend.box.just = "left",
+      legend.justification = "left"
     )
 
   get_visible_legend(legend_plot)
@@ -1154,7 +1170,10 @@ p_ecp_95_expanding <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.05,
-  file_name = "Forecasting/Sim Plots Ideal/forecast_ecp_95_expanding_2x2.pdf",
+  file_name = file.path(
+    shiny_ideal_plot_dir,
+    "forecast_ecp_95_expanding_2x2.pdf"
+  ),
   width = 16,
   height = 14,
   y_limits = c(0.85, 1.00)
@@ -1176,7 +1195,10 @@ p_ecp_80_expanding_all_T <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.20,
-  file_name = "Forecasting/Sim Plots Ideal/forecast_ecp_80_expanding_all_T_2x2.pdf",
+  file_name = file.path(
+    shiny_ideal_plot_dir,
+    "forecast_ecp_80_expanding_all_T_2x2.pdf"
+  ),
   width = 16,
   height = 14,
   y_limits = c(0.7, 0.9)
@@ -1195,7 +1217,10 @@ p_ecp_80_expanding <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.20,
-  file_name = "Forecasting/Sim Plots Ideal/forecast_ecp_80_expanding_2x2.pdf",
+  file_name = file.path(
+    ideal_plot_dir,
+    "forecast_ecp_80_expanding_2x2.pdf"
+  ),
   width = 16,
   height = 14,
   y_limits = c(0.7, 0.9)
@@ -1217,7 +1242,10 @@ p_ecp_95_fixed <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.05,
-  file_name = "Forecasting/Sim Plots Ideal/forecast_ecp_95_fixed_2x2.pdf",
+  file_name = file.path(
+    shiny_ideal_plot_dir,
+    "forecast_ecp_95_fixed_2x2.pdf"
+  ),
   width = 16,
   height = 14,
   y_limits = c(0.85, 1.00)
@@ -1239,7 +1267,10 @@ p_ecp_80_fixed <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.20,
-  file_name = "Forecasting/Sim Plots Ideal/forecast_ecp_80_fixed_2x2.pdf",
+  file_name = file.path(
+    shiny_ideal_plot_dir,
+    "forecast_ecp_80_fixed_2x2.pdf"
+  ),
   width = 16,
   height = 14,
   y_limits = c(0.7, 0.9)
@@ -1269,6 +1300,10 @@ plot_margin_size <- 5
 
 get_T_cols <- function(df) {
   T_levels <- levels(droplevels(df$T_factor))
+
+  if (length(T_levels) == 1L) {
+    return(setNames("#D95F02", T_levels))
+  }
 
   cols <- c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E")
 
@@ -1396,7 +1431,10 @@ p_score_ratio_95 <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "Forecasting/Sim Plots Ideal/forecast_score_ratio_95_2x2.pdf",
+  file_name = file.path(
+    shiny_ideal_plot_dir,
+    "forecast_score_ratio_95_2x2.pdf"
+  ),
   width = 16,
   height = 14,
   y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"
@@ -1420,7 +1458,7 @@ p_score_ratio_80 <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "Forecasting/Sim Plots Ideal/forecast_score_ratio_80_2x2.pdf",
+  file_name = file.path(ideal_plot_dir, "forecast_score_ratio_80_2x2.pdf"),
   width = 16,
   height = 14,
   y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"
@@ -1548,10 +1586,10 @@ p_wis_ratio <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "Forecasting/Sim Plots Ideal/forecast_wis_ratio_2x2.pdf",
+  file_name = file.path(ideal_plot_dir, "forecast_wis_ratio_2x2.pdf"),
   width = 16,
   height = 14,
-  y_axis_label = "WIS ratio to FARFIMA(1,1,0)"
+  y_axis_label = "Weighted interval score ratio to FARFIMA(1,1,0)"
 )
 
 p_wis_ratio

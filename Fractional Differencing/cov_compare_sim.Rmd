@@ -29,6 +29,20 @@ source("DGP non-stationary FTS/sim_FARMA.R")
 source("Fractional Differencing/local.W.R")
 source("Fractional Differencing/Covariance Matrix.R")
 source("Forecasting/forecast_plot_helpers.R")
+
+memory_plot_dir <- file.path(
+  project_root,
+  "Fractional Differencing",
+  "Sim Plots"
+)
+shiny_memory_plot_dir <- file.path(
+  project_root,
+  "Forecasting",
+  "Shiny App Plots",
+  "Memory Estimation"
+)
+dir.create(memory_plot_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(shiny_memory_plot_dir, recursive = TRUE, showWarnings = FALSE)
 ```
 
 # Comparison across covariance matrix with local whittling and DFA estimator (both long memory and non-stationary)
@@ -247,14 +261,7 @@ combine_memory_estimators <- function(p_lw,
     p_dfa_panel,
     ncol = 1,
     align = "v",
-    axis = "lr",
-    labels = c("LW", "DFA"),
-    label_size = 18,
-    label_fontface = "bold",
-    label_x = 0.015,
-    label_y = 0.995,
-    hjust = 0,
-    vjust = 1
+    axis = "lr"
   )
 
   panels_with_axes <- cowplot::ggdraw() +
@@ -310,13 +317,13 @@ p_raw_peng_FAR
 
 
 ggsave(
-  "Sim Plots/Cov_LW_FAR.pdf",
+  file.path(shiny_memory_plot_dir, "Cov_LW_FAR.pdf"),
   p_raw_whittle_FAR,
   width = 10, height = 6, dpi = 1200
 )
 
 ggsave(
-  "Sim Plots/Cov_DFA_FAR.pdf",
+  file.path(shiny_memory_plot_dir, "Cov_DFA_FAR.pdf"),
   p_raw_peng_FAR,
   width = 10, height = 6, dpi = 1200
 )
@@ -324,7 +331,7 @@ ggsave(
 p_cov_lw_dfa_FAR <- combine_memory_estimators(
   p_lw = p_raw_whittle_FAR,
   p_dfa = p_raw_peng_FAR,
-  file_name = "Sim Plots/Cov_LW_DFA_FAR.pdf"
+  file_name = file.path(memory_plot_dir, "Cov_LW_DFA_FAR.pdf")
 )
 ```
 
@@ -578,38 +585,38 @@ p_cov_peng_FARMA_08 <- plot_cov_compare_FARMA(
 
 
 ggsave(
-  "Sim Plots/Cov_LW_FARMA_MA_0.2.pdf",
+  file.path(shiny_memory_plot_dir, "Cov_LW_FARMA_MA_0.2.pdf"),
   p_cov_whittle_FARMA_02,
   width = 10, height = 6, dpi = 1200
 )
 
 ggsave(
-  "Sim Plots/Cov_LW_FARMA_MA_0.5.pdf",
+  file.path(shiny_memory_plot_dir, "Cov_LW_FARMA_MA_0.5.pdf"),
   p_cov_whittle_FARMA_05,
   width = 10, height = 6, dpi = 1200
 )
 
 ggsave(
-  "Sim Plots/Cov_LW_FARMA_MA_0.8.pdf",
+  file.path(shiny_memory_plot_dir, "Cov_LW_FARMA_MA_0.8.pdf"),
   p_cov_whittle_FARMA_08,
   width = 10, height = 6, dpi = 1200
 )
 
 
 ggsave(
-  "Sim Plots/Cov_DFA_FARMA_MA_0.2.pdf",
+  file.path(shiny_memory_plot_dir, "Cov_DFA_FARMA_MA_0.2.pdf"),
   p_cov_peng_FARMA_02,
   width = 10, height = 6, dpi = 1200
 )
 
 ggsave(
-  "Sim Plots/Cov_DFA_FARMA_MA_0.5.pdf",
+  file.path(shiny_memory_plot_dir, "Cov_DFA_FARMA_MA_0.5.pdf"),
   p_cov_peng_FARMA_05,
   width = 10, height = 6, dpi = 1200
 )
 
 ggsave(
-  "Sim Plots/Cov_DFA_FARMA_MA_0.8.pdf",
+  file.path(shiny_memory_plot_dir, "Cov_DFA_FARMA_MA_0.8.pdf"),
   p_cov_peng_FARMA_08,
   width = 10, height = 6, dpi = 1200
 )
@@ -617,6 +624,9 @@ ggsave(
 p_cov_lw_dfa_FARMA_05 <- combine_memory_estimators(
   p_lw = p_cov_whittle_FARMA_05,
   p_dfa = p_cov_peng_FARMA_05,
-  file_name = "Sim Plots/Cov_LW_DFA_FARMA_MA_0.5.pdf"
+  file_name = file.path(
+    memory_plot_dir,
+    "Cov_LW_DFA_FARMA_MA_0.5.pdf"
+  )
 )
 ```

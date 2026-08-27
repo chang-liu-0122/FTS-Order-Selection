@@ -60,6 +60,16 @@ source("Forecasting/Forecasting Helper.R")
 source("Forecasting/forecast_compare_sim.R")
 source("Forecasting/unified_compare_sim.R")
 source("Forecasting/forecast_plot_helpers.R")
+
+unified_plot_dir <- file.path(project_root, "Forecasting", "Sim Plots Unified")
+shiny_unified_plot_dir <- file.path(
+  project_root,
+  "Forecasting",
+  "Shiny App Plots",
+  "Unified"
+)
+dir.create(unified_plot_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(shiny_unified_plot_dir, recursive = TRUE, showWarnings = FALSE)
 ```
 
 
@@ -465,7 +475,7 @@ d_est_summary_clean <- clean_d_summary(unified_forecast_res$d_summary)
 p_d_T500 <- plot_d_estimation_two_panel_singleT(
   df = d_est_summary_clean,
   T_show = 500,
-  file_name = "Sim Plots Unified/unified_d_estimation_T500.pdf",
+  file_name = file.path(shiny_unified_plot_dir, "unified_d_estimation_T500.pdf"),
   width = 16,
   height = 14
 )
@@ -473,7 +483,7 @@ p_d_T500 <- plot_d_estimation_two_panel_singleT(
 p_d_T1000 <- plot_d_estimation_two_panel_singleT(
   df = d_est_summary_clean,
   T_show = 1000,
-  file_name = "Sim Plots Unified/unified_d_estimation_T1000.pdf",
+  file_name = file.path(unified_plot_dir, "unified_d_estimation_T1000.pdf"),
   width = 16,
   height = 14
 )
@@ -755,7 +765,10 @@ order_acc_unified <- make_order_accuracy_plot_data(df = unified_forecast_res$ord
 p_order_T1000 <- combine_four_order_accuracy_fixedT(
   df = order_acc_unified,
   T_show = 1000,
-  file_name = "Sim Plots Unified/unified_order_accuracy_T1000_2x2.pdf",
+  file_name = file.path(
+    unified_plot_dir,
+    "unified_order_accuracy_T1000_2x2.pdf"
+  ),
   width = 16,
   height = 14
 )
@@ -763,7 +776,10 @@ p_order_T1000 <- combine_four_order_accuracy_fixedT(
 p_order_T500 <- combine_four_order_accuracy_fixedT(
   df = order_acc_unified,
   T_show = 500,
-  file_name = "Sim Plots Unified/unified_order_accuracy_T500_2x2.pdf",
+  file_name = file.path(
+    shiny_unified_plot_dir,
+    "unified_order_accuracy_T500_2x2.pdf"
+  ),
   width = 16,
   height = 14
 )
@@ -1060,7 +1076,7 @@ combine_four_unified_rmse_ratio_models <- function(df,
                                                    common_y = FALSE,
                                                    value_col = "RMSE_ratio",
                                                    y_limits = NULL,
-                                                   y_axis_label = "RMSE ratio to FARFIMA(1,1,0)") {
+                                                   y_axis_label = "Root mean squared error ratio to FARFIMA(1,1,0)") {
   models <- c("(1,0)", "(0,1)", "(2,0)", "(1,1)")
   titles <- c(
     "FARFIMA(1,d,0)",
@@ -1097,7 +1113,10 @@ unified_balanced_ratio_T1000_expanding <-
 p_unified_rmse_ratio_2x2 <-
   combine_four_unified_rmse_ratio_models(
     df = unified_balanced_ratio_T1000_expanding,
-    file_name = "Sim Plots Unified/unified_rmse_ratio_balanced_expanding_T1000_2x2.pdf",
+    file_name = file.path(
+      unified_plot_dir,
+      "unified_rmse_ratio_balanced_expanding_T1000_2x2.pdf"
+    ),
     width = 16,
     height = 16,
     common_y = FALSE
@@ -1117,7 +1136,7 @@ p_unified_rmse_11 <-
   ) +
   labs(
     x = "Forecast horizon h",
-    y = "RMSE ratio to FARFIMA(1,1,0)",
+    y = "Root mean squared error ratio to FARFIMA(1,1,0)",
     colour = "Order selection",
     linetype = "Order selection",
     shape = "Order selection"
@@ -1744,7 +1763,10 @@ p_unified_ecp_95_expanding <-
   combine_four_unified_ecp_models_shared_axes(
     df = unified_ecp_95_expanding,
     alpha_show = 0.05,
-    file_name = "Sim Plots Unified/unified_ecp_95_expanding_2x2.pdf",
+    file_name = file.path(
+      shiny_unified_plot_dir,
+      "unified_ecp_95_expanding_2x2.pdf"
+    ),
     width = 16,
     height = 16,
     y_limits = c(0.9, 1.00)
@@ -1754,7 +1776,10 @@ p_unified_ecp_80_expanding <-
   combine_four_unified_ecp_models_shared_axes(
     df = unified_ecp_80_expanding,
     alpha_show = 0.20,
-    file_name = "Sim Plots Unified/unified_ecp_80_expanding_2x2.pdf",
+    file_name = file.path(
+      unified_plot_dir,
+      "unified_ecp_80_expanding_2x2.pdf"
+    ),
     width = 16,
     height = 16,
     y_limits = c(0.75, 0.85)
@@ -2061,7 +2086,10 @@ unified_score_ratio_80_expanding <- prepare_unified_score_ratio_data(
 p_unified_score_ratio_95_expanding <-
   combine_four_unified_score_ratio_models_shared_axes(
     df = unified_score_ratio_95_expanding,
-    file_name = "Sim Plots Unified/unified_score_ratio_95_expanding_2x2.pdf",
+    file_name = file.path(
+      shiny_unified_plot_dir,
+      "unified_score_ratio_95_expanding_2x2.pdf"
+    ),
     width = 16,
     height = 16
   )
@@ -2069,7 +2097,10 @@ p_unified_score_ratio_95_expanding <-
 p_unified_score_ratio_80_expanding <-
   combine_four_unified_score_ratio_models_shared_axes(
     df = unified_score_ratio_80_expanding,
-    file_name = "Sim Plots Unified/unified_score_ratio_80_expanding_2x2.pdf",
+    file_name = file.path(
+      unified_plot_dir,
+      "unified_score_ratio_80_expanding_2x2.pdf"
+    ),
     width = 16,
     height = 16
   )
@@ -2267,16 +2298,19 @@ p_unified_wis_ratio_expanding <-
     file_name = "Plots Slides/unified_wis_ratio_expanding_2x2.pdf",
     width = 20,
     height = 15,
-    y_axis_label = "WIS ratio to FARFIMA(1,1,0)"
+    y_axis_label = "Weighted interval score ratio to FARFIMA(1,1,0)"
   )
 
 p_unified_wis_ratio_expanding <-
   combine_four_unified_score_ratio_models_shared_axes(
     df = unified_wis_ratio_expanding,
-    file_name = "Sim Plots Unified/unified_wis_ratio_expanding_2x2.pdf",
+    file_name = file.path(
+      unified_plot_dir,
+      "unified_wis_ratio_expanding_2x2.pdf"
+    ),
     width = 16,
     height = 16,
-    y_axis_label = "WIS ratio to FARFIMA(1,1,0)"
+    y_axis_label = "Weighted interval score ratio to FARFIMA(1,1,0)"
   )
 ```
 
