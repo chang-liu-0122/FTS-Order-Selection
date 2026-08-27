@@ -216,6 +216,87 @@ plot_cov_compare_FAR <- function(df, estimator_keep, title = NULL) {
       axis.text.x = element_text(angle = 0, hjust = 0.5)
     )
 }
+
+combine_memory_estimators <- function(p_lw,
+                                      p_dfa,
+                                      file_name,
+                                      width = 10,
+                                      height = 11) {
+  shared_legend <- get_visible_legend(
+    p_lw +
+      theme(
+        legend.position = "top",
+        legend.box = "horizontal"
+      )
+  )
+
+  p_lw_panel <- p_lw +
+    labs(x = NULL, y = NULL) +
+    theme(
+      legend.position = "none",
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank()
+    )
+
+  p_dfa_panel <- p_dfa +
+    labs(x = NULL, y = NULL) +
+    theme(legend.position = "none")
+
+  panels <- cowplot::plot_grid(
+    p_lw_panel,
+    p_dfa_panel,
+    ncol = 1,
+    align = "v",
+    axis = "lr",
+    labels = c("LW", "DFA"),
+    label_size = 18,
+    label_fontface = "bold",
+    label_x = 0.015,
+    label_y = 0.995,
+    hjust = 0,
+    vjust = 1
+  )
+
+  panels_with_axes <- cowplot::ggdraw() +
+    cowplot::draw_plot(
+      panels,
+      x = 0.085,
+      y = 0.075,
+      width = 0.905,
+      height = 0.90
+    ) +
+    cowplot::draw_label(
+      expression("Mean estimated memory parameter " * hat(d)),
+      x = 0.018,
+      y = 0.53,
+      angle = 90,
+      size = 18
+    ) +
+    cowplot::draw_label(
+      "Sample size T",
+      x = 0.54,
+      y = 0.018,
+      size = 18
+    )
+
+  combined <- cowplot::plot_grid(
+    shared_legend,
+    panels_with_axes,
+    ncol = 1,
+    rel_heights = c(0.13, 1)
+  )
+
+  ggsave(
+    file_name,
+    combined,
+    width = width,
+    height = height,
+    dpi = 1200,
+    bg = "white"
+  )
+
+  combined
+}
 ```
 
 
@@ -238,6 +319,12 @@ ggsave(
   "Sim Plots/Cov_DFA_FAR.pdf",
   p_raw_peng_FAR,
   width = 10, height = 6, dpi = 1200
+)
+
+p_cov_lw_dfa_FAR <- combine_memory_estimators(
+  p_lw = p_raw_whittle_FAR,
+  p_dfa = p_raw_peng_FAR,
+  file_name = "Sim Plots/Cov_LW_DFA_FAR.pdf"
 )
 ```
 
@@ -525,5 +612,11 @@ ggsave(
   "Sim Plots/Cov_DFA_FARMA_MA_0.8.pdf",
   p_cov_peng_FARMA_08,
   width = 10, height = 6, dpi = 1200
+)
+
+p_cov_lw_dfa_FARMA_05 <- combine_memory_estimators(
+  p_lw = p_cov_whittle_FARMA_05,
+  p_dfa = p_cov_peng_FARMA_05,
+  file_name = "Sim Plots/Cov_LW_DFA_FARMA_MA_0.5.pdf"
 )
 ```

@@ -341,6 +341,17 @@ get_window_shapes <- function(df) {
   setNames(shapes[seq_along(window_levels)], window_levels)
 }
 
+get_T_shapes <- function(df) {
+  T_levels <- levels(droplevels(df$T_factor))
+  shapes <- c(16, 17, 15, 18)
+
+  if (length(T_levels) > length(shapes)) {
+    stop("Not enough shapes for the number of sample sizes.")
+  }
+
+  setNames(shapes[seq_along(T_levels)], T_levels)
+}
+
 plot_forecast_ratio_one_model <- function(df,
                                           model_show,
                                           title = NULL,
@@ -369,7 +380,7 @@ plot_forecast_ratio_one_model <- function(df,
       group = interaction(T_factor, window_type),
       colour = T_factor,
       linetype = window_type,
-      shape = window_type
+      shape = T_factor
     )
   ) +
     geom_hline(
@@ -382,7 +393,7 @@ plot_forecast_ratio_one_model <- function(df,
     geom_point(size = plot_point_size) +
     scale_colour_manual(values = get_T_cols(df), drop = FALSE) +
     scale_linetype_manual(values = get_window_ltys(df), drop = FALSE) +
-    scale_shape_manual(values = get_window_shapes(df), drop = FALSE) +
+    scale_shape_manual(values = get_T_shapes(df), drop = FALSE) +
     scale_x_continuous(breaks = sort(unique(df_sub$h)), expand = expansion(mult = c(0.02, 0.04))) +
     labs(
       title = title,
@@ -390,7 +401,7 @@ plot_forecast_ratio_one_model <- function(df,
       y = NULL,
       colour = "Sample size T",
       linetype = "Window",
-      shape = "Window"
+      shape = "Sample size T"
     ) +
     coord_cartesian(ylim = y_limits) +
     theme_classic(base_size = plot_base_size) +
@@ -402,7 +413,7 @@ plot_forecast_ratio_one_model <- function(df,
       },
 
       legend.direction = "horizontal",
-      legend.box = "horizontal",
+      legend.box = "vertical",
 
       legend.title = element_text(size = legend_title_size, face = "bold"),
 
@@ -464,7 +475,7 @@ make_forecast_legend_manual <- function(df) {
       y = 1,
       colour = T_factor,
       linetype = window_type,
-      shape = window_type,
+      shape = T_factor,
       group = interaction(T_factor, window_type)
     )
   ) +
@@ -472,20 +483,30 @@ make_forecast_legend_manual <- function(df) {
     geom_point(size = legend_point_size) +
     scale_colour_manual(values = get_T_cols(df_use), drop = FALSE) +
     scale_linetype_manual(values = get_window_ltys(df_use), drop = FALSE) +
-    scale_shape_manual(values = get_window_shapes(df_use), drop = FALSE) +
-    labs(colour = "Sample size T", linetype = "Window", shape = "Window") +
+    scale_shape_manual(values = get_T_shapes(df_use), drop = FALSE) +
+    labs(colour = "Sample size T", linetype = "Window", shape = "Sample size T") +
     guides(
-      colour = guide_legend(order = 1, nrow = 1, byrow = TRUE),
+      colour = guide_legend(
+        order = 1,
+        nrow = 1,
+        byrow = TRUE,
+        override.aes = list(shape = unname(get_T_shapes(df_use)))
+      ),
       linetype = guide_legend(order = 2, nrow = 1, byrow = TRUE),
       shape = "none"
     ) +
     theme_void(base_size = legend_text_size * ggplot2::.pt) +
     paper_legend_theme(
       base_size = legend_text_size * ggplot2::.pt,
-      position = "right"
+      position = "top"
+    ) +
+    theme(
+      legend.box = "vertical",
+      legend.direction = "horizontal",
+      legend.box.just = "center"
     )
 
-  cowplot::get_legend(legend_plot)
+  get_visible_legend(legend_plot)
 }
 
 make_forecast_legend_manual_core <- make_forecast_legend_manual
@@ -506,7 +527,12 @@ combine_four_forecast_models_shared_axes <- function(
     titles = titles,
     value_col = value_col,
     plot_model = plot_forecast_ratio_one_model,
-    legend = make_forecast_legend_manual(df),
+    legend = if (n_distinct(df$T_factor) > 1L ||
+                 n_distinct(df$window_type) > 1L) {
+      make_forecast_legend_manual(df)
+    } else {
+      NULL
+    },
     y_axis_label = y_axis_label,
     file_name = file_name,
     width = width,
@@ -528,8 +554,11 @@ forecast_ratio_summary <- make_forecast_ratio_summary(df = forecast_accuracy_sum
                                                       metric_col = "RMSE",
                                                       method_col = "method")
 
+forecast_ratio_main <- forecast_ratio_summary %>%
+  filter(T_value == 1000, window_type == "Expanding")
+
 p_forecast_ratio <- combine_four_forecast_models_shared_axes(
-  df = forecast_ratio_summary,
+  df = forecast_ratio_main,
   models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
   titles = c(
     "FARFIMA(1,1,0)",
@@ -537,7 +566,7 @@ p_forecast_ratio <- combine_four_forecast_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "Sim Plots Ideal/forecast_rmse_ratio_2x2.pdf",
+  file_name = "Forecasting/Sim Plots Ideal/forecast_rmse_ratio_2x2.pdf",
   width = 16,
   height = 14
 )
@@ -793,6 +822,11 @@ make_ecp_summary <- function(df,
 method_cols_ecp <- c("FARFIMA(1,1,0)" = "#1B9E77",
                      "Plugin forecast" = "#D95F02")
 
+method_ltys_ecp <- c(
+  "FARFIMA(1,1,0)" = "longdash",
+  "Plugin forecast" = "solid"
+)
+
 get_T_shapes_ecp <- function(df) {
   T_levels <- levels(droplevels(df$T_factor))
 
@@ -821,13 +855,15 @@ make_ecp_legend_no_window <- function(df) {
   df_use <- df %>%
     mutate(method = droplevels(method), T_factor = droplevels(T_factor))
 
+  show_sample_size <- n_distinct(df_use$T_factor) > 1L
+
   legend_plot <- ggplot(
     df_use,
     aes(
       x = h,
       y = ECP,
       colour = method,
-      linetype = T_factor,
+      linetype = method,
       shape = T_factor,
       group = interaction(method, T_factor)
     )
@@ -836,20 +872,43 @@ make_ecp_legend_no_window <- function(df) {
     geom_point(size = legend_point_size) +
     scale_colour_manual(values = method_cols_ecp, drop = FALSE) +
     scale_shape_manual(values = get_T_shapes_ecp(df_use), drop = FALSE) +
-    scale_linetype_manual(values = get_T_ltys_ecp(df_use), drop = FALSE) +
-    labs(colour = "Forecasting method", linetype = "Sample size T", shape = "Sample size T") +
+    scale_linetype_manual(values = method_ltys_ecp, drop = FALSE) +
+    labs(
+      colour = "Forecasting method",
+      linetype = "Forecasting method",
+      shape = "Sample size T"
+    ) +
     guides(
-      colour = guide_legend(order = 1, nrow = 1, byrow = TRUE),
-      linetype = guide_legend(order = 2, nrow = 1, byrow = TRUE),
-      shape = "none"
+      colour = guide_legend(
+        order = 1,
+        nrow = 1,
+        byrow = TRUE,
+        override.aes = list(shape = NA)
+      ),
+      linetype = "none",
+      shape = if (show_sample_size) {
+        guide_legend(
+          order = 2,
+          nrow = 1,
+          byrow = TRUE,
+          override.aes = list(colour = "black", linetype = 0)
+        )
+      } else {
+        "none"
+      }
     ) +
     theme_void(base_size = legend_text_size * ggplot2::.pt) +
     paper_legend_theme(
       base_size = legend_text_size * ggplot2::.pt,
-      position = "right"
+      position = "top"
+    ) +
+    theme(
+      legend.box = "vertical",
+      legend.direction = "horizontal",
+      legend.box.just = "center"
     )
 
-  cowplot::get_legend(legend_plot)
+  get_visible_legend(legend_plot)
 }
 
 plot_ecp_one_model <- function(df,
@@ -878,7 +937,7 @@ plot_ecp_one_model <- function(df,
       y = ECP,
       group = interaction(method, T_factor),
       colour = method,
-      linetype = T_factor,
+      linetype = method,
       shape = T_factor
     )
   ) +
@@ -891,7 +950,7 @@ plot_ecp_one_model <- function(df,
     geom_line(linewidth = plot_line_width) +
     geom_point(size = plot_point_size) +
     scale_colour_manual(values = method_cols_ecp, drop = FALSE) +
-    scale_linetype_manual(values = get_T_ltys_ecp(df), drop = FALSE) +
+    scale_linetype_manual(values = method_ltys_ecp, drop = FALSE) +
     scale_shape_manual(values = get_T_shapes_ecp(df), drop = FALSE) +
     scale_x_continuous(breaks = sort(unique(df_sub$h)), expand = expansion(mult = c(0.02, 0.04))) +
     scale_y_continuous(
@@ -1082,8 +1141,11 @@ ecp_summary_95_expanding <- make_ecp_summary(
   window_show = "Expanding"
 )
 
+ecp_summary_95_main <- ecp_summary_95_expanding %>%
+  filter(T_value == 1000)
+
 p_ecp_95_expanding <- combine_four_ecp_models_shared_axes(
-  df = ecp_summary_95_expanding,
+  df = ecp_summary_95_main,
   models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
   titles = c(
     "FARFIMA(1,1,0)",
@@ -1092,7 +1154,7 @@ p_ecp_95_expanding <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.05,
-  file_name = "Sim Plots Ideal/forecast_ecp_95_expanding_2x2.pdf",
+  file_name = "Forecasting/Sim Plots Ideal/forecast_ecp_95_expanding_2x2.pdf",
   width = 16,
   height = 14,
   y_limits = c(0.85, 1.00)
@@ -1104,7 +1166,7 @@ ecp_summary_80_expanding <- make_ecp_summary(
   window_show = "Expanding"
 )
 
-p_ecp_80_expanding <- combine_four_ecp_models_shared_axes(
+p_ecp_80_expanding_all_T <- combine_four_ecp_models_shared_axes(
   df = ecp_summary_80_expanding,
   models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
   titles = c(
@@ -1114,7 +1176,26 @@ p_ecp_80_expanding <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.20,
-  file_name = "Sim Plots Ideal/forecast_ecp_80_expanding_2x2.pdf",
+  file_name = "Forecasting/Sim Plots Ideal/forecast_ecp_80_expanding_all_T_2x2.pdf",
+  width = 16,
+  height = 14,
+  y_limits = c(0.7, 0.9)
+)
+
+ecp_summary_80_main <- ecp_summary_80_expanding %>%
+  filter(T_value == 1000)
+
+p_ecp_80_expanding <- combine_four_ecp_models_shared_axes(
+  df = ecp_summary_80_main,
+  models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
+  titles = c(
+    "FARFIMA(1,1,0)",
+    "FARFIMA(0,1,1)",
+    "FARFIMA(2,1,0)",
+    "FARFIMA(1,1,1)"
+  ),
+  alpha_show = 0.20,
+  file_name = "Forecasting/Sim Plots Ideal/forecast_ecp_80_expanding_2x2.pdf",
   width = 16,
   height = 14,
   y_limits = c(0.7, 0.9)
@@ -1136,7 +1217,7 @@ p_ecp_95_fixed <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.05,
-  file_name = "Sim Plots Ideal/forecast_ecp_95_fixed_2x2.pdf",
+  file_name = "Forecasting/Sim Plots Ideal/forecast_ecp_95_fixed_2x2.pdf",
   width = 16,
   height = 14,
   y_limits = c(0.85, 1.00)
@@ -1158,7 +1239,7 @@ p_ecp_80_fixed <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.20,
-  file_name = "Sim Plots Ideal/forecast_ecp_80_fixed_2x2.pdf",
+  file_name = "Forecasting/Sim Plots Ideal/forecast_ecp_80_fixed_2x2.pdf",
   width = 16,
   height = 14,
   y_limits = c(0.7, 0.9)
@@ -1303,8 +1384,11 @@ score_ratio_95 <- make_score_ratio_summary(
   score_col = "Score"
 )
 
+score_ratio_95_main <- score_ratio_95 %>%
+  filter(T_value == 1000, window_type == "Expanding")
+
 p_score_ratio_95 <- combine_four_score_ratio_models_shared_axes(
-  df = score_ratio_95,
+  df = score_ratio_95_main,
   models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
   titles = c(
     "FARFIMA(1,1,0)",
@@ -1312,7 +1396,7 @@ p_score_ratio_95 <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "Sim Plots Ideal/forecast_score_ratio_95_2x2.pdf",
+  file_name = "Forecasting/Sim Plots Ideal/forecast_score_ratio_95_2x2.pdf",
   width = 16,
   height = 14,
   y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"
@@ -1324,8 +1408,11 @@ score_ratio_80 <- make_score_ratio_summary(
   score_col = "Score"
 )
 
+score_ratio_80_main <- score_ratio_80 %>%
+  filter(T_value == 1000, window_type == "Expanding")
+
 p_score_ratio_80 <- combine_four_score_ratio_models_shared_axes(
-  df = score_ratio_80,
+  df = score_ratio_80_main,
   models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
   titles = c(
     "FARFIMA(1,1,0)",
@@ -1333,7 +1420,7 @@ p_score_ratio_80 <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "Sim Plots Ideal/forecast_score_ratio_80_2x2.pdf",
+  file_name = "Forecasting/Sim Plots Ideal/forecast_score_ratio_80_2x2.pdf",
   width = 16,
   height = 14,
   y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"
@@ -1449,8 +1536,11 @@ make_ideal_wis_ratio_data <- function(df) {
 
 wis_ratio <- make_ideal_wis_ratio_data(ideal_wis)
 
+wis_ratio_main <- wis_ratio %>%
+  filter(T_value == 1000, window_type == "Expanding")
+
 p_wis_ratio <- combine_four_score_ratio_models_shared_axes(
-  df = wis_ratio,
+  df = wis_ratio_main,
   models = c("(1,0)", "(0,1)", "(2,0)", "(1,1)"),
   titles = c(
     "FARFIMA(1,1,0)",
@@ -1458,7 +1548,7 @@ p_wis_ratio <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = "Sim Plots Ideal/forecast_wis_ratio_2x2.pdf",
+  file_name = "Forecasting/Sim Plots Ideal/forecast_wis_ratio_2x2.pdf",
   width = 16,
   height = 14,
   y_axis_label = "WIS ratio to FARFIMA(1,1,0)"

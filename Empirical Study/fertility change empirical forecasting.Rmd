@@ -908,6 +908,11 @@ fertility_interval_score_ratio_plot <- ggplot(
     name = "Nominal coverage",
     values = c("80%" = "dashed", "95%" = "dotted")
   ) +
+  guides(
+    colour = guide_legend(order = 1, nrow = 1, byrow = TRUE),
+    shape = "none",
+    linetype = guide_legend(order = 2, nrow = 1, byrow = TRUE)
+  ) +
   scale_x_continuous(breaks = 1:10) +
   labs(
     x = "Forecast horizon h",
@@ -915,7 +920,9 @@ fertility_interval_score_ratio_plot <- ggplot(
   ) +
   theme(
     legend.position = "top",
-    legend.box = "horizontal"
+    legend.box = "vertical",
+    legend.direction = "horizontal",
+    legend.box.just = "center"
   )
 
 fertility_weighted_interval_score_ratio_data <- wis_ratios |>
@@ -1950,6 +1957,11 @@ mortality_interval_score_ratio_plot <- ggplot(
     name = "Nominal coverage",
     values = c("80%" = "dashed", "95%" = "dotted")
   ) +
+  guides(
+    colour = guide_legend(order = 1, nrow = 1, byrow = TRUE),
+    shape = "none",
+    linetype = guide_legend(order = 2, nrow = 1, byrow = TRUE)
+  ) +
   scale_x_continuous(breaks = 1:10) +
   labs(
     x = "Forecast horizon h",
@@ -1957,7 +1969,9 @@ mortality_interval_score_ratio_plot <- ggplot(
   ) +
   theme(
     legend.position = "top",
-    legend.box = "horizontal"
+    legend.box = "vertical",
+    legend.direction = "horizontal",
+    legend.box.just = "center"
   )
 
 mortality_weighted_interval_score_ratio_data <- mortality_wis_ratios |>

@@ -4,7 +4,7 @@
 
 ### Monte Carlo simulation study
 
-1. **Memory estimation:** replace the four separate FAR/FARMA and LW/DFA figures with one compact 2-by-2 comparison. Use FARFIMA\((1,d,0)\) and the representative FARFIMA\((1,d,1)\), \(\nu=0.5\), setting as columns, and LW and DFA as rows. The remaining moving-average strengths belong in the appendix.
+1. **Memory estimation:** use the vertically combined LW--DFA figure for FARFIMA\((1,d,0)\). If a FARMA comparison is needed, use the corresponding combined FARFIMA\((1,d,1)\), \(\nu=0.5\), figure. Each combined figure has one legend and one pair of shared axes. The separate estimator figures and the remaining moving-average strengths belong in the appendix.
 2. **Order selection:** retain both order-accuracy figures:
    - `order_accuracy_far_fma_2x2.pdf`
    - `order_accuracy_farma_2x2.pdf`
@@ -19,13 +19,14 @@
    - `unified_ecp_80_expanding_2x2.pdf`
    - `unified_wis_ratio_expanding_2x2.pdf`
 
-This gives eleven main simulation figures after combining the memory-estimation results. Each retained figure answers a distinct question: estimation of \(d\), recovery of \((p,q)\), point accuracy, coverage, or overall probabilistic accuracy.
+Use only \(T=1000\) and the expanding-window scheme in the main ideal and unified forecasting figures. This makes the two studies directly comparable and keeps each retained figure focused on estimation of \(d\), recovery of \((p,q)\), point accuracy, coverage, or overall probabilistic accuracy. The other sample sizes and window schemes remain useful as robustness results.
 
 ## Recommended appendix figures
 
 Move the following supporting or overlapping results to the appendix:
 
 - separate LW and DFA memory-estimation figures after the combined main-text figure is created;
+- ideal-study figures for \(T=500\) and fixed-window forecasting;
 - FARFIMA\((1,d,1)\) memory-estimation figures for \(\nu=0.2\) and \(\nu=0.8\);
 - all \(T=500\) unified figures;
 - fixed-window ideal coverage figures;

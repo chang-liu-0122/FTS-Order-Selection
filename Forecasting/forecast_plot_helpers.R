@@ -156,6 +156,25 @@ paper_plot_theme <- function(base_size = 17, legend_position = "top") {
     paper_legend_theme(base_size, legend_position)
 }
 
+get_visible_legend <- function(plot) {
+  plot_grob <- ggplot2::ggplotGrob(plot)
+  guide_index <- which(grepl("^guide-box", plot_grob$layout$name))
+  guide_index <- guide_index[
+    !vapply(
+      plot_grob$grobs[guide_index],
+      inherits,
+      logical(1),
+      what = "zeroGrob"
+    )
+  ]
+
+  if (length(guide_index) == 0L) {
+    return(NULL)
+  }
+
+  plot_grob$grobs[[guide_index[1]]]
+}
+
 paper_method_scales <- function(methods,
                                 title = "Forecasting method",
                                 drop = FALSE) {
@@ -359,12 +378,16 @@ assemble_ratio_panel_grid <- function(df,
       size = shared_label_size
     )
 
-  final_plot <- cowplot::plot_grid(
-    legend,
-    labelled_grid,
-    ncol = 1,
-    rel_heights = c(0.13, 1)
-  )
+  final_plot <- if (is.null(legend)) {
+    labelled_grid
+  } else {
+    cowplot::plot_grid(
+      legend,
+      labelled_grid,
+      ncol = 1,
+      rel_heights = c(0.13, 1)
+    )
+  }
 
   if (!is.null(file_name)) {
     dir.create(dirname(file_name), recursive = TRUE, showWarnings = FALSE)
