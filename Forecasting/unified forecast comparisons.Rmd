@@ -62,14 +62,7 @@ source("Forecasting/unified_compare_sim.R")
 source("Forecasting/forecast_plot_helpers.R")
 
 unified_plot_dir <- file.path(project_root, "Forecasting", "Sim Plots Unified")
-shiny_unified_plot_dir <- file.path(
-  project_root,
-  "Forecasting",
-  "Shiny App Plots",
-  "Unified"
-)
 dir.create(unified_plot_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(shiny_unified_plot_dir, recursive = TRUE, showWarnings = FALSE)
 ```
 
 
@@ -475,7 +468,7 @@ d_est_summary_clean <- clean_d_summary(unified_forecast_res$d_summary)
 p_d_T500 <- plot_d_estimation_two_panel_singleT(
   df = d_est_summary_clean,
   T_show = 500,
-  file_name = file.path(shiny_unified_plot_dir, "unified_d_estimation_T500.pdf"),
+  file_name = NULL,
   width = 16,
   height = 14
 )
@@ -776,10 +769,7 @@ p_order_T1000 <- combine_four_order_accuracy_fixedT(
 p_order_T500 <- combine_four_order_accuracy_fixedT(
   df = order_acc_unified,
   T_show = 500,
-  file_name = file.path(
-    shiny_unified_plot_dir,
-    "unified_order_accuracy_T500_2x2.pdf"
-  ),
+  file_name = NULL,
   width = 16,
   height = 14
 )
@@ -1763,10 +1753,7 @@ p_unified_ecp_95_expanding <-
   combine_four_unified_ecp_models_shared_axes(
     df = unified_ecp_95_expanding,
     alpha_show = 0.05,
-    file_name = file.path(
-      shiny_unified_plot_dir,
-      "unified_ecp_95_expanding_2x2.pdf"
-    ),
+    file_name = NULL,
     width = 16,
     height = 16,
     y_limits = c(0.9, 1.00)
@@ -2086,10 +2073,7 @@ unified_score_ratio_80_expanding <- prepare_unified_score_ratio_data(
 p_unified_score_ratio_95_expanding <-
   combine_four_unified_score_ratio_models_shared_axes(
     df = unified_score_ratio_95_expanding,
-    file_name = file.path(
-      shiny_unified_plot_dir,
-      "unified_score_ratio_95_expanding_2x2.pdf"
-    ),
+    file_name = NULL,
     width = 16,
     height = 16
   )

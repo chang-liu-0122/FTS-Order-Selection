@@ -35,14 +35,7 @@ memory_plot_dir <- file.path(
   "Fractional Differencing",
   "Sim Plots"
 )
-shiny_memory_plot_dir <- file.path(
-  project_root,
-  "Forecasting",
-  "Shiny App Plots",
-  "Memory Estimation"
-)
 dir.create(memory_plot_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(shiny_memory_plot_dir, recursive = TRUE, showWarnings = FALSE)
 ```
 
 # Comparison across covariance matrix with local whittling and DFA estimator (both long memory and non-stationary)
@@ -315,19 +308,6 @@ p_raw_peng_FAR <- plot_cov_compare_FAR(df_raw_line_FAR, estimator_keep = "DFA")
 p_raw_whittle_FAR
 p_raw_peng_FAR
 
-
-ggsave(
-  file.path(shiny_memory_plot_dir, "Cov_LW_FAR.pdf"),
-  p_raw_whittle_FAR,
-  width = 10, height = 6, dpi = 1200
-)
-
-ggsave(
-  file.path(shiny_memory_plot_dir, "Cov_DFA_FAR.pdf"),
-  p_raw_peng_FAR,
-  width = 10, height = 6, dpi = 1200
-)
-
 p_cov_lw_dfa_FAR <- combine_memory_estimators(
   p_lw = p_raw_whittle_FAR,
   p_dfa = p_raw_peng_FAR,
@@ -581,44 +561,6 @@ p_cov_peng_FARMA_08 <- plot_cov_compare_FARMA(
   df_raw_line_FARMA,
   estimator_keep = "DFA",
   ma_keep = 0.8
-)
-
-
-ggsave(
-  file.path(shiny_memory_plot_dir, "Cov_LW_FARMA_MA_0.2.pdf"),
-  p_cov_whittle_FARMA_02,
-  width = 10, height = 6, dpi = 1200
-)
-
-ggsave(
-  file.path(shiny_memory_plot_dir, "Cov_LW_FARMA_MA_0.5.pdf"),
-  p_cov_whittle_FARMA_05,
-  width = 10, height = 6, dpi = 1200
-)
-
-ggsave(
-  file.path(shiny_memory_plot_dir, "Cov_LW_FARMA_MA_0.8.pdf"),
-  p_cov_whittle_FARMA_08,
-  width = 10, height = 6, dpi = 1200
-)
-
-
-ggsave(
-  file.path(shiny_memory_plot_dir, "Cov_DFA_FARMA_MA_0.2.pdf"),
-  p_cov_peng_FARMA_02,
-  width = 10, height = 6, dpi = 1200
-)
-
-ggsave(
-  file.path(shiny_memory_plot_dir, "Cov_DFA_FARMA_MA_0.5.pdf"),
-  p_cov_peng_FARMA_05,
-  width = 10, height = 6, dpi = 1200
-)
-
-ggsave(
-  file.path(shiny_memory_plot_dir, "Cov_DFA_FARMA_MA_0.8.pdf"),
-  p_cov_peng_FARMA_08,
-  width = 10, height = 6, dpi = 1200
 )
 
 p_cov_lw_dfa_FARMA_05 <- combine_memory_estimators(

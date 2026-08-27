@@ -25,7 +25,7 @@ Use only \(T=1000\) and the expanding-window scheme in the main ideal and unifie
 
 ## Interactive supplementary figures
 
-The following supporting settings are stored under `Forecasting/Shiny App Plots` for a future Shiny application:
+The following supporting settings remain reproducible from the simulation results and R Markdown files, but are not exported to the thesis figure folders. They may later be exposed through a Shiny application:
 
 - separate LW and DFA memory-estimation figures after the combined main-text figure is created;
 - ideal-study figures for \(T=500\) and fixed-window forecasting;

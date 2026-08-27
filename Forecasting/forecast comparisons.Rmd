@@ -58,14 +58,7 @@ source("Forecasting/unified_compare_sim.R")
 source("Forecasting/forecast_plot_helpers.R")
 
 ideal_plot_dir <- file.path(project_root, "Forecasting", "Sim Plots Ideal")
-shiny_ideal_plot_dir <- file.path(
-  project_root,
-  "Forecasting",
-  "Shiny App Plots",
-  "Ideal"
-)
 dir.create(ideal_plot_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(shiny_ideal_plot_dir, recursive = TRUE, showWarnings = FALSE)
 ```
 
 
@@ -517,8 +510,8 @@ make_forecast_legend_manual <- function(df) {
     theme(
       legend.box = "vertical",
       legend.direction = "horizontal",
-      legend.box.just = "left",
-      legend.justification = "left"
+      legend.box.just = "center",
+      legend.justification = "center"
     )
 
   get_visible_legend(legend_plot)
@@ -920,8 +913,8 @@ make_ecp_legend_no_window <- function(df) {
     theme(
       legend.box = "vertical",
       legend.direction = "horizontal",
-      legend.box.just = "left",
-      legend.justification = "left"
+      legend.box.just = "center",
+      legend.justification = "center"
     )
 
   get_visible_legend(legend_plot)
@@ -1170,10 +1163,7 @@ p_ecp_95_expanding <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.05,
-  file_name = file.path(
-    shiny_ideal_plot_dir,
-    "forecast_ecp_95_expanding_2x2.pdf"
-  ),
+  file_name = NULL,
   width = 16,
   height = 14,
   y_limits = c(0.85, 1.00)
@@ -1195,10 +1185,7 @@ p_ecp_80_expanding_all_T <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.20,
-  file_name = file.path(
-    shiny_ideal_plot_dir,
-    "forecast_ecp_80_expanding_all_T_2x2.pdf"
-  ),
+  file_name = NULL,
   width = 16,
   height = 14,
   y_limits = c(0.7, 0.9)
@@ -1242,10 +1229,7 @@ p_ecp_95_fixed <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.05,
-  file_name = file.path(
-    shiny_ideal_plot_dir,
-    "forecast_ecp_95_fixed_2x2.pdf"
-  ),
+  file_name = NULL,
   width = 16,
   height = 14,
   y_limits = c(0.85, 1.00)
@@ -1267,10 +1251,7 @@ p_ecp_80_fixed <- combine_four_ecp_models_shared_axes(
     "FARFIMA(1,1,1)"
   ),
   alpha_show = 0.20,
-  file_name = file.path(
-    shiny_ideal_plot_dir,
-    "forecast_ecp_80_fixed_2x2.pdf"
-  ),
+  file_name = NULL,
   width = 16,
   height = 14,
   y_limits = c(0.7, 0.9)
@@ -1431,10 +1412,7 @@ p_score_ratio_95 <- combine_four_score_ratio_models_shared_axes(
     "FARFIMA(2,1,0)",
     "FARFIMA(1,1,1)"
   ),
-  file_name = file.path(
-    shiny_ideal_plot_dir,
-    "forecast_score_ratio_95_2x2.pdf"
-  ),
+  file_name = NULL,
   width = 16,
   height = 14,
   y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"

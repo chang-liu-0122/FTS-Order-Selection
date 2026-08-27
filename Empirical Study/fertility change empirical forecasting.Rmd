@@ -922,8 +922,8 @@ fertility_interval_score_ratio_plot <- ggplot(
     legend.position = "top",
     legend.box = "vertical",
     legend.direction = "horizontal",
-    legend.box.just = "left",
-    legend.justification = "left"
+    legend.box.just = "center",
+    legend.justification = "center"
   )
 
 fertility_weighted_interval_score_ratio_data <- wis_ratios |>
@@ -1972,8 +1972,8 @@ mortality_interval_score_ratio_plot <- ggplot(
     legend.position = "top",
     legend.box = "vertical",
     legend.direction = "horizontal",
-    legend.box.just = "left",
-    legend.justification = "left"
+    legend.box.just = "center",
+    legend.justification = "center"
   )
 
 mortality_weighted_interval_score_ratio_data <- mortality_wis_ratios |>
