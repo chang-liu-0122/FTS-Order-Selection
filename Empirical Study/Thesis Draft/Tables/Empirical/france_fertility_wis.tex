@@ -1,0 +1,18 @@
+\begin{table}[!htb]
+\centering
+\begingroup\fontsize{7}{9}\selectfont
+\setlength{\tabcolsep}{2.5pt}
+\caption{Weighted interval score for French incremental fertility rate over all ten horizons. The smallest WIS at each horizon is highlighted in purple.}
+\label{tab:emp-fertility-wis}
+\begin{tabular}{lrrrrrrrrrr}
+\toprule
+Method & $h=1$ & $h=2$ & $h=3$ & $h=4$ & $h=5$ & $h=6$ & $h=7$ & $h=8$ & $h=9$ & $h=10$ \\
+\midrule
+FARFIMA$(1,1,0)$ & 0.0196 & 0.0177 & 0.0187 & 0.0186 & 0.0195 & 0.0217 & 0.0236 & 0.0219 & 0.0274 & 0.0278 \\
+Functional IC & 0.0152 & \textcolor{purple}{\textbf{0.0149}} & 0.0154 & 0.0161 & \textcolor{purple}{\textbf{0.0164}} & 0.0174 & \textcolor{purple}{\textbf{0.0181}} & \textcolor{purple}{\textbf{0.0189}} & \textcolor{purple}{\textbf{0.0203}} & \textcolor{purple}{\textbf{0.0193}} \\
+CV & \textcolor{purple}{\textbf{0.0151}} & \textcolor{purple}{\textbf{0.0149}} & \textcolor{purple}{\textbf{0.0153}} & \textcolor{purple}{\textbf{0.0159}} & \textcolor{purple}{\textbf{0.0164}} & \textcolor{purple}{\textbf{0.0173}} & \textcolor{purple}{\textbf{0.0181}} & \textcolor{purple}{\textbf{0.0189}} & \textcolor{purple}{\textbf{0.0203}} & \textcolor{purple}{\textbf{0.0193}} \\
+\bottomrule
+\end{tabular}
+\endgroup
+\end{table}
+

@@ -166,6 +166,12 @@ method_linetypes <- c(
   "CV" = "dotdash"
 )
 
+method_plot_labels <- c(
+  "Benchmark (FARFIMA(1,1,0))" = "FARFIMA(1,1,0)",
+  "Functional IC" = "Functional IC",
+  "CV" = "CV"
+)
+
 paper_theme <- theme_bw(base_size = 15) +
   theme(
     plot.title = element_text(face = "bold", size = 16),
@@ -187,6 +193,17 @@ attach_method <- function(data) {
     rename(internal_method = method) |>
     inner_join(method_key, by = c("order_selection_method", "internal_method")) |>
     mutate(Method = as_method_factor(Method))
+}
+
+format_best_html <- function(x, colour) {
+  shown <- sprintf("%.4f", x)
+  is_best <- round(x, 4) == min(round(x, 4), na.rm = TRUE)
+  shown[is_best] <- kableExtra::cell_spec(
+    shown[is_best],
+    color = colour,
+    bold = TRUE
+  )
+  shown
 }
 ```
 
@@ -304,6 +321,27 @@ france_centered <- sweep(
 ### Raw and smoothed rainbow plots
 
 ```{r}
+savepdf("Empirical Study/Empirical Plots/France_fertility_raw_rainbow_plot", width = 12, height = 10)
+
+plot(
+  fts(1:nrow(fertility_data$France$raw), fertility_data$France$raw),
+  xlab = "Age",
+  ylab = "Fertility rate"
+)
+
+dev.off()
+
+savepdf("Empirical Study/Empirical Plots/France_fertility_raw_change_rainbow_plot", width = 12, height = 10)
+
+plot(
+  fts(1:nrow(fertility_data$France$raw_change), fertility_data$France$raw_change),
+  xlab = "Age",
+  ylab = "Incremental fertility rate"
+)
+
+dev.off()
+
+
 savepdf("Empirical Study/Empirical Plots/France_fertility_smooth_rainbow_plot", width = 12, height = 10)
 
 plot(
@@ -319,7 +357,7 @@ savepdf("Empirical Study/Empirical Plots/France_fertility_smooth_change_rainbow_
 plot(
   fts(1:nrow(fertility_data$France$smooth_change), fertility_data$France$smooth_change),
   xlab = "Age",
-  ylab = "Increment fertility rate"
+  ylab = "Incremental fertility rate"
 )
 
 dev.off()
@@ -339,7 +377,7 @@ savepdf("Empirical Study/Empirical Plots/Slovakia_fertility_smooth_change_rainbo
 plot(
   fts(1:nrow(fertility_data$Slovakia$smooth_change), fertility_data$Slovakia$smooth_change),
   xlab = "Age",
-  ylab = "Increment fertility rate"
+  ylab = "Incremental fertility rate"
 )
 
 dev.off()
@@ -371,7 +409,7 @@ plot_FACF_topright(
   rho = slovakia_identification$rho,
   Blueline = slovakia_identification$Blueline,
   ci = 0.95,
-  ylab = "Increment fertility fACF",
+  ylab = "Incremental fertility rate fACF",
   yaxt = "n",
   ylim = c(0, 0.5)
 )
@@ -406,17 +444,11 @@ plot_FACF_topright(
   rho = france_identification$rho,
   Blueline = france_identification$Blueline,
   ci = 0.95,
-  ylab = "Increment fertility fACF",
+  ylab = "Incremental fertility rate fACF",
   yaxt = "n",
   ylim = c(0, 0.5)
 )
 
-
-axis(
-  side = 2,
-  at = seq(0, 0.5, by = 0.05),
-  labels = seq(0, 0.5, by = 0.05)
-)
 
 axis(
   side = 2,
@@ -741,91 +773,267 @@ wis_ratios <- wis_metrics |>
   mutate(`WIS ratio` = WIS / benchmark_WIS)
 ```
 
-### Point accuracy and WIS
+### Point accuracy
 
-The compact table reports values and benchmark ratios at horizons 1, 5, and 10. RMSE, MAE, ECP, CPD, interval score, and WIS compare the forecasts fitted to the smoothed changes with the corresponding raw fertility-rate changes. All ten horizons remain visible in the figures.
+The point-forecast table reports RMSE and MAE for all ten horizons. The smallest RMSE within each country and horizon is red, and the smallest MAE is blue. Forecasts are fitted to the smoothed changes and evaluated against the corresponding raw fertility-rate changes.
 
 ```{r point-wis-table}
-point_ratios |>
-  left_join(
-    wis_ratios |> dplyr::select(Country, Method, h, WIS, `WIS ratio`),
-    by = c("Country", "Method", "h")
+point_metrics |>
+  filter(Country == "France") |>
+  group_by(Country, h) |>
+  mutate(
+    RMSE = format_best_html(RMSE, "red"),
+    MAE = format_best_html(MAE, "blue")
   ) |>
-  dplyr::select(
-    Country,
-    h,
-    Method,
-    RMSE,
-    `RMSE ratio`,
-    MAE,
-    `MAE ratio`,
-    WIS,
-    `WIS ratio`
+  ungroup() |>
+  mutate(
+    Method = recode(
+      as.character(Method),
+      `Benchmark (FARFIMA(1,1,0))` = "Benchmark"
+    ),
+    Method = factor(Method, levels = c("Benchmark", "Functional IC", "CV"))
   ) |>
-  arrange(Country, h, Method)
+  dplyr::select(Country, h, Method, RMSE, MAE) |>
+  pivot_wider(
+    names_from = Method,
+    values_from = c(RMSE, MAE),
+    names_glue = "{.value}_{Method}"
+  ) |>
+  arrange(Country, h) |>
+  kable(
+    format = "html",
+    escape = FALSE,
+    col.names = c(
+      "Country", "h",
+      "Bench.", "IC", "CV",
+      "Bench.", "IC", "CV"
+    ),
+    caption = "Fertility point forecast accuracy over all ten horizons"
+  ) |>
+  kableExtra::add_header_above(c(" " = 2, "RMSE" = 3, "MAE" = 3))
 ```
 
-```{r point-ratio-plot, fig.width=12, fig.height=7}
-point_ratio_plot_data <- point_ratios |>
-  filter(Method != "Benchmark (FARFIMA(1,1,0))") |>
-  dplyr::select(Country, Method, h, `RMSE ratio`, `MAE ratio`) |>
-  pivot_longer(ends_with("ratio"), names_to = "Metric", values_to = "Ratio")
-
-ggplot(
-  point_ratio_plot_data,
-  aes(h, Ratio, colour = Method, shape = Method, linetype = Method)
-) +
-  geom_hline(yintercept = 1, linetype = 3, colour = "grey50") +
-  geom_line(linewidth = 0.9) +
-  geom_point(size = 2.6) +
-  facet_grid(Country ~ Metric, scales = "free_y") +
-  scale_colour_manual(values = method_palette, breaks = c("Functional IC", "CV")) +
-  scale_shape_manual(values = method_shapes, breaks = c("Functional IC", "CV")) +
-  scale_linetype_manual(values = method_linetypes, breaks = c("Functional IC", "CV")) +
-  scale_x_continuous(breaks = 1:10) +
-  labs(
-    title = "Point forecast error relative to the benchmark",
-    subtitle = "The horizontal line at one is the benchmark; lower values are better",
-    x = "Forecast horizon h",
-    y = "Ratio"
+```{r fertility-ratio-plots, fig.width=12, fig.height=6}
+fertility_point_ratio_data <- point_ratios |>
+  filter(
+    Country == "France",
+    Method != "Benchmark (FARFIMA(1,1,0))"
+  ) |>
+  dplyr::select(Method, h, `RMSE ratio`, `MAE ratio`) |>
+  pivot_longer(
+    ends_with("ratio"),
+    names_to = "Metric",
+    values_to = "Ratio"
+  ) |>
+  mutate(
+    Metric = recode(
+      Metric,
+      `RMSE ratio` = "RMSE",
+      `MAE ratio` = "MAE"
+    ),
+    Metric = factor(Metric, levels = c("RMSE", "MAE"))
   )
-```
 
-```{r wis-ratio-plot, fig.width=12, fig.height=5.5}
-ggplot(
-  wis_ratios |> filter(Method != "Benchmark (FARFIMA(1,1,0))"),
-  aes(h, `WIS ratio`, colour = Method, shape = Method, linetype = Method)
+fertility_point_ratio_plot <- ggplot(
+  fertility_point_ratio_data,
+  aes(
+    h,
+    Ratio,
+    colour = Method,
+    shape = Method,
+    linetype = Method,
+    group = Method
+  )
 ) +
-  geom_hline(yintercept = 1, linetype = 3, colour = "grey50") +
+  geom_hline(
+    yintercept = 1,
+    linetype = "dashed",
+    colour = "#333333",
+    linewidth = 1
+  ) +
   geom_line(linewidth = 0.9) +
-  geom_point(size = 2.6) +
-  facet_wrap(~ Country, nrow = 1, scales = "free_y") +
+  geom_point(size = 2.5) +
+  facet_wrap(~ Metric, nrow = 1) +
   scale_colour_manual(
+    name = "Forecasting method",
     values = method_palette,
     breaks = c("Functional IC", "CV")
   ) +
   scale_shape_manual(
+    name = "Forecasting method",
     values = method_shapes,
     breaks = c("Functional IC", "CV")
   ) +
   scale_linetype_manual(
+    name = "Forecasting method",
     values = method_linetypes,
     breaks = c("Functional IC", "CV")
   ) +
   scale_x_continuous(breaks = 1:10) +
   labs(
-    title = "Weighted interval score relative to the benchmark",
-    subtitle = "The horizontal line at one is the benchmark; WIS combines the point forecast and both intervals",
     x = "Forecast horizon h",
-    y = "Ratio"
+    y = "Ratio to FARFIMA(1,1,0)"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.box = "horizontal"
   )
+
+fertility_interval_score_ratio_data <- interval_ratios |>
+  filter(
+    Country == "France",
+    Method != "Benchmark (FARFIMA(1,1,0))"
+  ) |>
+  transmute(
+    Method,
+    h,
+    `Nominal coverage` = factor(
+      scales::percent(1 - alpha, accuracy = 1),
+      levels = c("80%", "95%")
+    ),
+    Ratio = `Score ratio`
+  )
+
+fertility_interval_score_ratio_plot <- ggplot(
+  fertility_interval_score_ratio_data,
+  aes(
+    h,
+    Ratio,
+    colour = Method,
+    shape = Method,
+    linetype = `Nominal coverage`,
+    group = interaction(Method, `Nominal coverage`)
+  )
+) +
+  geom_hline(
+    yintercept = 1,
+    linetype = "dashed",
+    colour = "#333333",
+    linewidth = 1
+  ) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2.5) +
+  scale_colour_manual(
+    name = "Forecasting method",
+    values = method_palette,
+    breaks = c("Functional IC", "CV")
+  ) +
+  scale_shape_manual(
+    name = "Forecasting method",
+    values = method_shapes,
+    breaks = c("Functional IC", "CV")
+  ) +
+  scale_linetype_manual(
+    name = "Nominal coverage",
+    values = c("80%" = "dashed", "95%" = "dotted")
+  ) +
+  scale_x_continuous(breaks = 1:10) +
+  labs(
+    x = "Forecast horizon h",
+    y = "Interval Score Ratio to FARFIMA(1,1,0)"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.box = "horizontal"
+  )
+
+fertility_weighted_interval_score_ratio_data <- wis_ratios |>
+  filter(
+    Country == "France",
+    Method != "Benchmark (FARFIMA(1,1,0))"
+  )
+
+fertility_weighted_interval_score_ratio_plot <- ggplot(
+  fertility_weighted_interval_score_ratio_data,
+  aes(
+    h,
+    `WIS ratio`,
+    colour = Method,
+    shape = Method,
+    linetype = Method,
+    group = Method
+  )
+) +
+  geom_hline(
+    yintercept = 1,
+    linetype = "dashed",
+    colour = "#333333",
+    linewidth = 1
+  ) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2.5) +
+  scale_colour_manual(
+    name = "Forecasting method",
+    values = method_palette,
+    breaks = c("Functional IC", "CV")
+  ) +
+  scale_shape_manual(
+    name = "Forecasting method",
+    values = method_shapes,
+    breaks = c("Functional IC", "CV")
+  ) +
+  scale_linetype_manual(
+    name = "Forecasting method",
+    values = method_linetypes,
+    breaks = c("Functional IC", "CV")
+  ) +
+  scale_x_continuous(breaks = 1:10) +
+  labs(
+    x = "Forecast horizon h",
+    y = "Weighted Interval Score Ratio to FARFIMA(1,1,0)"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.box = "horizontal"
+  )
+
+fertility_point_ratio_plot
+fertility_interval_score_ratio_plot
+fertility_weighted_interval_score_ratio_plot
+
+fertility_ratio_exports <- list(
+  France_fertility_point_forecast_ratios = fertility_point_ratio_plot,
+  France_fertility_interval_score_ratios = fertility_interval_score_ratio_plot,
+  France_fertility_weighted_interval_score_ratios = fertility_weighted_interval_score_ratio_plot
+)
+
+for (file_stem in names(fertility_ratio_exports)) {
+  for (plot_directory in c(
+    "Empirical Study/Empirical Plots",
+    "Empirical Study/Thesis Draft/Figures/Empirical"
+  )) {
+    ggsave(
+      filename = file.path(plot_directory, paste0(file_stem, ".pdf")),
+      plot = fertility_ratio_exports[[file_stem]],
+      width = 12,
+      height = 6,
+      dpi = 1200,
+      bg = "white"
+    )
+  }
+}
 ```
 
-### ECP and score
+### Interval coverage and score
 
 ```{r interval-table}
-interval_ratios |>
-  mutate(`Interval level` = scales::percent(1 - alpha, accuracy = 1)) |>
+fertility_interval_table <- interval_metrics |>
+  filter(Country == "France") |>
+  group_by(Country, alpha, h) |>
+  mutate(
+    CPD = format_best_html(CPD, "red"),
+    Score = format_best_html(Score, "blue")
+  ) |>
+  ungroup() |>
+  mutate(
+    `Interval level` = scales::percent(1 - alpha, accuracy = 1),
+    ECP = sprintf("%.4f", ECP),
+    Method = recode(
+      as.character(Method),
+      `Benchmark (FARFIMA(1,1,0))` = "Benchmark"
+    ),
+    Method = factor(Method, levels = c("Benchmark", "Functional IC", "CV"))
+  ) |>
   dplyr::select(
     Country,
     `Interval level`,
@@ -833,13 +1041,73 @@ interval_ratios |>
     Method,
     ECP,
     CPD,
-    Score,
-    `Score ratio`
+    Score
+  ) |>
+  pivot_wider(
+    names_from = Method,
+    values_from = c(ECP, CPD, Score),
+    names_glue = "{.value}_{Method}"
+  ) |>
+  arrange(Country, h, desc(`Interval level`)) |>
+  group_by(Country, h) |>
+  mutate(h = if_else(row_number() == 1, as.character(h), "")) |>
+  ungroup() |>
+  dplyr::select(Country, h, `Interval level`, everything())
+
+fertility_interval_kable <- fertility_interval_table |>
+  kable(
+    format = "html",
+    escape = FALSE,
+    col.names = c(
+      "Country", "h", "CP",
+      "Bench.", "IC", "CV",
+      "Bench.", "IC", "CV",
+      "Bench.", "IC", "CV"
+    ),
+    caption = "Fertility interval performance over all ten horizons"
+  ) |>
+  kableExtra::add_header_above(
+    c(" " = 3, "ECP" = 3, "CPD" = 3, "Score" = 3)
+  )
+
+for (row_now in seq(2, nrow(fertility_interval_table), by = 2)) {
+  fertility_interval_kable <- fertility_interval_kable |>
+    kableExtra::row_spec(
+      row_now,
+      extra_css = "border-bottom: 1px solid #777;"
+    )
+}
+
+kableExtra::scroll_box(fertility_interval_kable, width = "100%")
+
+fertility_wis_table <- wis_metrics |>
+  filter(Country == "France") |>
+  group_by(h) |>
+  mutate(WIS = format_best_html(WIS, "purple")) |>
+  ungroup() |>
+  mutate(
+    Method = recode(
+      as.character(Method),
+      `Benchmark (FARFIMA(1,1,0))` = "FARFIMA(1,1,0)"
+    ),
+    Method = factor(Method, levels = c("FARFIMA(1,1,0)", "Functional IC", "CV"))
+  ) |>
+  dplyr::select(Method, h, WIS) |>
+  pivot_wider(names_from = h, values_from = WIS) |>
+  arrange(Method)
+
+fertility_wis_table |>
+  kable(
+    format = "html",
+    escape = FALSE,
+    col.names = c("Method", paste0("h = ", 1:10)),
+    caption = "Weighted interval score for French incremental fertility rate"
   )
 ```
 
 ```{r coverage-plot, fig.width=12, fig.height=7}
 coverage_plot_data <- interval_metrics |>
+  filter(Country == "France") |>
   mutate(
     `Interval level` = factor(
       scales::percent(1 - alpha, accuracy = 1),
@@ -847,25 +1115,71 @@ coverage_plot_data <- interval_metrics |>
     )
   )
 
-ggplot(
+fertility_coverage_plot <- ggplot(
   coverage_plot_data,
   aes(h, ECP, colour = Method, shape = Method, linetype = Method)
 ) +
-  geom_hline(aes(yintercept = 1 - alpha), colour = "grey50", linetype = 3) +
+  geom_hline(
+    aes(yintercept = 1 - alpha),
+    colour = "#333333",
+    linetype = "dashed",
+    linewidth = 1
+  ) +
   geom_line(linewidth = 0.9) +
   geom_point(size = 2.4) +
-  facet_grid(Country ~ `Interval level`) +
-  scale_colour_manual(values = method_palette, drop = FALSE) +
-  scale_shape_manual(values = method_shapes, drop = FALSE) +
-  scale_linetype_manual(values = method_linetypes, drop = FALSE) +
+  facet_grid(. ~ `Interval level`) +
+  scale_colour_manual(
+    name = "Forecasting method",
+    values = method_palette,
+    labels = method_plot_labels,
+    drop = FALSE
+  ) +
+  scale_shape_manual(
+    name = "Forecasting method",
+    values = method_shapes,
+    labels = method_plot_labels,
+    drop = FALSE
+  ) +
+  scale_linetype_manual(
+    name = "Forecasting method",
+    values = method_linetypes,
+    labels = method_plot_labels,
+    drop = FALSE
+  ) +
   scale_x_continuous(breaks = 1:10) +
-  coord_cartesian(ylim = c(0, 1)) +
+  scale_y_continuous(
+    breaks = seq(0.50, 1.00, by = 0.05),
+    labels = scales::number_format(accuracy = 0.01)
+  ) +
+  coord_cartesian(ylim = c(0.50, 1.00)) +
   labs(
-    title = "Empirical coverage probability",
-    subtitle = "Horizontal lines show the nominal coverage",
     x = "Forecast horizon h",
     y = "ECP"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.box = "horizontal"
   )
+
+fertility_coverage_plot
+
+ggsave(
+  "Empirical Study/Empirical Plots/France_fertility_ecp.pdf",
+  fertility_coverage_plot,
+  width = 12,
+  height = 5.5,
+  dpi = 1200,
+  bg = "white"
+)
+
+ggsave(
+  "Empirical Study/Thesis Draft/Figures/Empirical/France_fertility_ecp.pdf",
+  fertility_coverage_plot,
+  width = 12,
+  height = 5.5,
+  dpi = 1200,
+  bg = "white"
+)
 ```
 
 ```{r cpd-plot, fig.width=12, fig.height=7}
@@ -885,36 +1199,6 @@ ggplot(
     subtitle = "Smaller values are closer to nominal coverage",
     x = "Forecast horizon h",
     y = "Absolute coverage deviation"
-  )
-```
-
-```{r score-ratio-plot, fig.width=12, fig.height=7}
-score_ratio_plot_data <- interval_ratios |>
-  filter(Method != "Benchmark (FARFIMA(1,1,0))") |>
-  mutate(
-    `Interval level` = factor(
-      scales::percent(1 - alpha, accuracy = 1),
-      levels = c("80%", "95%")
-    )
-  )
-
-ggplot(
-  score_ratio_plot_data,
-  aes(h, `Score ratio`, colour = Method, shape = Method, linetype = Method)
-) +
-  geom_hline(yintercept = 1, linetype = 3, colour = "grey50") +
-  geom_line(linewidth = 0.9) +
-  geom_point(size = 2.4) +
-  facet_grid(Country ~ `Interval level`, scales = "free_y") +
-  scale_colour_manual(values = method_palette, breaks = c("Functional IC", "CV")) +
-  scale_shape_manual(values = method_shapes, breaks = c("Functional IC", "CV")) +
-  scale_linetype_manual(values = method_linetypes, breaks = c("Functional IC", "CV")) +
-  scale_x_continuous(breaks = 1:10) +
-  labs(
-    title = "Interval score relative to the benchmark",
-    subtitle = "The horizontal line at one is the benchmark; lower values are better",
-    x = "Forecast horizon h",
-    y = "Ratio"
   )
 ```
 
@@ -1019,13 +1303,13 @@ forecast_band_data <- bind_rows(forecast_band_list) |>
 
 
 ```{r forecast-band-plots, results='asis', fig.width=13, fig.height=8.5}
-plot_method_levels <- c("Benchmark", "Functional IC", "CV")
+plot_method_levels <- c("FARFIMA(1,1,0)", "Functional IC", "CV")
 plot_method_palette <- c(
-  "Benchmark" = "#1B9E77",
+  "FARFIMA(1,1,0)" = "#1B9E77",
   "Functional IC" = "#D95F02",
   "CV" = "#7570B3"
 )
-plot_method_linetypes <- c("Benchmark" = "longdash",
+plot_method_linetypes <- c("FARFIMA(1,1,0)" = "longdash",
                            "Functional IC" = "solid",
                            "CV" = "dotdash")
 
@@ -1033,7 +1317,7 @@ for (country_now in names(fertility_data)) {
   plot_data <- forecast_band_data |>
     filter(Country == country_now) |>
     mutate(
-      `Plot method` = recode(as.character(Method), `Benchmark (FARFIMA(1,1,0))` = "Benchmark"),
+      `Plot method` = recode(as.character(Method), `Benchmark (FARFIMA(1,1,0))` = "FARFIMA(1,1,0)"),
       `Plot method` = factor(`Plot method`, levels = plot_method_levels)
     )
   
@@ -1057,7 +1341,7 @@ for (country_now in names(fertility_data)) {
           fill = `Plot method`,
           group = `Plot method`
         ),
-        alpha = 0.14,
+        alpha = 0.70,
         colour = NA
       ) +
       geom_line(
@@ -1098,14 +1382,34 @@ for (country_now in names(fertility_data)) {
         fill = guide_legend(order = 2, override.aes = list(alpha = 0.7))
       ) +
       labs(
-        title = paste(country_now, interval_now, "fertility-change forecasts"),
-        subtitle = "Raw observed change: black solid line; benchmark: green long-dashed line",
         x = "Age",
-        y = "Fertility-rate change"
+        y = "Increment fertility-rate"
       ) +
-      theme(legend.box = "vertical", plot.margin = margin(8, 8, 8, 16))
-    
+      theme(
+        legend.position = "top",
+        legend.box = "vertical",
+        plot.margin = margin(8, 8, 8, 16)
+      )
+
     print(forecast_plot)
+
+    ggsave(
+      filename = file.path(
+        "Empirical Study",
+        "Empirical Plots",
+        paste0(
+          country_now,
+          "_fertility_increment_forecasts_",
+          sub("%", "", interval_now),
+          ".pdf"
+        )
+      ),
+      plot = forecast_plot,
+      width = 12,
+      height = 10,
+      dpi = 1200,
+      bg = "white"
+    )
   }
 }
 ```
@@ -1250,7 +1554,7 @@ savepdf(
 france_female_identification <- fdaACF::obtain_FACF(
   t(mortality_series$Female),
   v = 0:95,
-  nlags = 40,
+  nlags = 20,
   ci = 0.95,
   estimation = "MC",
   figure = FALSE
@@ -1285,7 +1589,7 @@ savepdf(
 france_male_identification <- fdaACF::obtain_FACF(
   t(mortality_series$Male),
   v = 0:95,
-  nlags = 40,
+  nlags = 20,
   ci = 0.95,
   estimation = "MC",
   figure = FALSE
@@ -1518,88 +1822,257 @@ mortality_wis_ratios <- mortality_wis_metrics |>
   mutate(`WIS ratio` = WIS / benchmark_WIS)
 ```
 
-#### Point accuracy and WIS
+#### Point accuracy
 
 ```{r mortality-point-wis-table}
-mortality_point_ratios |>
-  left_join(
-    mortality_wis_ratios |>
-      dplyr::select(Sex, Method, h, WIS, `WIS ratio`),
-    by = c("Sex", "Method", "h")
+mortality_point_metrics |>
+  group_by(Sex, h) |>
+  mutate(
+    RMSE = format_best_html(RMSE, "red"),
+    MAE = format_best_html(MAE, "blue")
   ) |>
-  filter(h %in% c(1, 5, 10)) |>
-  dplyr::select(
-    Sex,
-    h,
-    Method,
-    RMSE,
-    `RMSE ratio`,
-    MAE,
-    `MAE ratio`,
-    WIS,
-    `WIS ratio`
+  ungroup() |>
+  mutate(
+    Method = recode(
+      as.character(Method),
+      `Benchmark (FARFIMA(1,1,0))` = "Benchmark"
+    ),
+    Method = factor(Method, levels = c("Benchmark", "Functional IC", "CV"))
   ) |>
-  arrange(Sex, h, Method) |>
+  dplyr::select(Sex, h, Method, RMSE, MAE) |>
+  pivot_wider(
+    names_from = Method,
+    values_from = c(RMSE, MAE),
+    names_glue = "{.value}_{Method}"
+  ) |>
+  arrange(Sex, h) |>
   kable(
-    digits = 4,
-    caption = "France mortality point accuracy and WIS at selected horizons"
-  )
+    format = "html",
+    escape = FALSE,
+    col.names = c(
+      "Sex", "h",
+      "Bench.", "IC", "CV",
+      "Bench.", "IC", "CV"
+    ),
+    caption = "France mortality point forecast accuracy over all ten horizons"
+  ) |>
+  kableExtra::add_header_above(c(" " = 2, "RMSE" = 3, "MAE" = 3))
 ```
 
-```{r mortality-point-ratio-plot, fig.width=12, fig.height=7}
-mortality_point_ratio_plot_data <- mortality_point_ratios |>
+```{r mortality-ratio-plots, fig.width=12, fig.height=7.5}
+mortality_point_ratio_data <- mortality_point_ratios |>
   filter(Method != "Benchmark (FARFIMA(1,1,0))") |>
   dplyr::select(Sex, Method, h, `RMSE ratio`, `MAE ratio`) |>
-  pivot_longer(ends_with("ratio"), names_to = "Metric", values_to = "Ratio")
+  pivot_longer(
+    ends_with("ratio"),
+    names_to = "Metric",
+    values_to = "Ratio"
+  ) |>
+  mutate(
+    Metric = recode(
+      Metric,
+      `RMSE ratio` = "RMSE",
+      `MAE ratio` = "MAE"
+    ),
+    Metric = factor(Metric, levels = c("RMSE", "MAE"))
+  )
 
-ggplot(
-  mortality_point_ratio_plot_data,
-  aes(h, Ratio, colour = Method, shape = Method, linetype = Method)
+mortality_point_ratio_plot <- ggplot(
+  mortality_point_ratio_data,
+  aes(
+    h,
+    Ratio,
+    colour = Method,
+    shape = Method,
+    linetype = Method,
+    group = Method
+  )
 ) +
-  geom_hline(yintercept = 1, linetype = 3, colour = "grey50") +
+  geom_hline(
+    yintercept = 1,
+    linetype = "dashed",
+    colour = "#333333",
+    linewidth = 1
+  ) +
   geom_line(linewidth = 0.9) +
-  geom_point(size = 2.6) +
-  facet_grid(Sex ~ Metric, scales = "free_y") +
-  scale_colour_manual(values = method_palette, breaks = c("Functional IC", "CV")) +
-  scale_shape_manual(values = method_shapes, breaks = c("Functional IC", "CV")) +
-  scale_linetype_manual(values = method_linetypes, breaks = c("Functional IC", "CV")) +
+  geom_point(size = 2.5) +
+  facet_grid(Sex ~ Metric) +
+  scale_colour_manual(
+    name = "Forecasting method",
+    values = method_palette,
+    breaks = c("Functional IC", "CV")
+  ) +
+  scale_shape_manual(
+    name = "Forecasting method",
+    values = method_shapes,
+    breaks = c("Functional IC", "CV")
+  ) +
+  scale_linetype_manual(
+    name = "Forecasting method",
+    values = method_linetypes,
+    breaks = c("Functional IC", "CV")
+  ) +
   scale_x_continuous(breaks = 1:10) +
   labs(
-    title = "France mortality point forecast error ratios",
-    subtitle = "The horizontal line at one is the benchmark; lower values are better",
     x = "Forecast horizon h",
-    y = "Ratio"
+    y = "Ratio to FARFIMA(1,1,0)"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.box = "horizontal"
   )
-```
 
-```{r mortality-wis-ratio-plot, fig.width=12, fig.height=5.5}
-ggplot(
-  mortality_wis_ratios |>
-    filter(Method != "Benchmark (FARFIMA(1,1,0))"),
-  aes(h, `WIS ratio`, colour = Method, shape = Method, linetype = Method)
+mortality_interval_score_ratio_data <- mortality_interval_ratios |>
+  filter(Method != "Benchmark (FARFIMA(1,1,0))") |>
+  transmute(
+    Sex,
+    Method,
+    h,
+    `Nominal coverage` = factor(
+      scales::percent(1 - alpha, accuracy = 1),
+      levels = c("80%", "95%")
+    ),
+    Ratio = `Score ratio`
+  )
+
+mortality_interval_score_ratio_plot <- ggplot(
+  mortality_interval_score_ratio_data,
+  aes(
+    h,
+    Ratio,
+    colour = Method,
+    shape = Method,
+    linetype = `Nominal coverage`,
+    group = interaction(Method, `Nominal coverage`)
+  )
 ) +
-  geom_hline(yintercept = 1, linetype = 3, colour = "grey50") +
+  geom_hline(
+    yintercept = 1,
+    linetype = "dashed",
+    colour = "#333333",
+    linewidth = 1
+  ) +
   geom_line(linewidth = 0.9) +
-  geom_point(size = 2.6) +
-  facet_wrap(~ Sex, nrow = 1, scales = "free_y") +
-  scale_colour_manual(values = method_palette, breaks = c("Functional IC", "CV")) +
-  scale_shape_manual(values = method_shapes, breaks = c("Functional IC", "CV")) +
-  scale_linetype_manual(values = method_linetypes, breaks = c("Functional IC", "CV")) +
+  geom_point(size = 2.5) +
+  facet_wrap(~ Sex, nrow = 1) +
+  scale_colour_manual(
+    name = "Forecasting method",
+    values = method_palette,
+    breaks = c("Functional IC", "CV")
+  ) +
+  scale_shape_manual(
+    name = "Forecasting method",
+    values = method_shapes,
+    breaks = c("Functional IC", "CV")
+  ) +
+  scale_linetype_manual(
+    name = "Nominal coverage",
+    values = c("80%" = "dashed", "95%" = "dotted")
+  ) +
   scale_x_continuous(breaks = 1:10) +
   labs(
-    title = "France mortality weighted interval score ratios",
-    subtitle = "The horizontal line at one is the benchmark; lower values are better",
     x = "Forecast horizon h",
-    y = "WIS ratio"
+    y = "Interval Score Ratio to FARFIMA(1,1,0)"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.box = "horizontal"
   )
+
+mortality_weighted_interval_score_ratio_data <- mortality_wis_ratios |>
+  filter(Method != "Benchmark (FARFIMA(1,1,0))")
+
+mortality_weighted_interval_score_ratio_plot <- ggplot(
+  mortality_weighted_interval_score_ratio_data,
+  aes(
+    h,
+    `WIS ratio`,
+    colour = Method,
+    shape = Method,
+    linetype = Method,
+    group = Method
+  )
+) +
+  geom_hline(
+    yintercept = 1,
+    linetype = "dashed",
+    colour = "#333333",
+    linewidth = 1
+  ) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2.5) +
+  facet_wrap(~ Sex, nrow = 1) +
+  scale_colour_manual(
+    name = "Forecasting method",
+    values = method_palette,
+    breaks = c("Functional IC", "CV")
+  ) +
+  scale_shape_manual(
+    name = "Forecasting method",
+    values = method_shapes,
+    breaks = c("Functional IC", "CV")
+  ) +
+  scale_linetype_manual(
+    name = "Forecasting method",
+    values = method_linetypes,
+    breaks = c("Functional IC", "CV")
+  ) +
+  scale_x_continuous(breaks = 1:10) +
+  labs(
+    x = "Forecast horizon h",
+    y = "Weighted Interval Score Ratio to FARFIMA(1,1,0)"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.box = "horizontal"
+  )
+
+mortality_point_ratio_plot
+mortality_interval_score_ratio_plot
+mortality_weighted_interval_score_ratio_plot
+
+mortality_ratio_exports <- list(
+  France_mortality_point_forecast_ratios = mortality_point_ratio_plot,
+  France_mortality_interval_score_ratios = mortality_interval_score_ratio_plot,
+  France_mortality_weighted_interval_score_ratios = mortality_weighted_interval_score_ratio_plot
+)
+
+for (file_stem in names(mortality_ratio_exports)) {
+  for (plot_directory in c(
+    "Empirical Study/Empirical Plots",
+    "Empirical Study/Thesis Draft/Figures/Empirical"
+  )) {
+    ggsave(
+      filename = file.path(plot_directory, paste0(file_stem, ".pdf")),
+      plot = mortality_ratio_exports[[file_stem]],
+      width = 12,
+      height = 7.5,
+      dpi = 1200,
+      bg = "white"
+    )
+  }
+}
 ```
 
 #### Interval coverage and score
 
 ```{r mortality-interval-table}
-mortality_interval_ratios |>
-  mutate(`Interval level` = scales::percent(1 - alpha, accuracy = 1)) |>
-  filter(h %in% c(1, 5, 10)) |>
+mortality_interval_table <- mortality_interval_metrics |>
+  group_by(Sex, alpha, h) |>
+  mutate(
+    CPD = format_best_html(CPD, "red"),
+    Score = format_best_html(Score, "blue")
+  ) |>
+  ungroup() |>
+  mutate(
+    `Interval level` = scales::percent(1 - alpha, accuracy = 1),
+    ECP = sprintf("%.4f", ECP),
+    Method = recode(
+      as.character(Method),
+      `Benchmark (FARFIMA(1,1,0))` = "Benchmark"
+    ),
+    Method = factor(Method, levels = c("Benchmark", "Functional IC", "CV"))
+  ) |>
   dplyr::select(
     Sex,
     `Interval level`,
@@ -1607,14 +2080,78 @@ mortality_interval_ratios |>
     Method,
     ECP,
     CPD,
-    Score,
-    `Score ratio`
+    Score
   ) |>
-  arrange(Sex, `Interval level`, h, Method) |>
+  pivot_wider(
+    names_from = Method,
+    values_from = c(ECP, CPD, Score),
+    names_glue = "{.value}_{Method}"
+  ) |>
+  arrange(Sex, h, desc(`Interval level`)) |>
+  group_by(Sex, h) |>
+  mutate(h = if_else(row_number() == 1, as.character(h), "")) |>
+  ungroup() |>
+  dplyr::select(Sex, h, `Interval level`, everything())
+
+mortality_interval_kable <- mortality_interval_table |>
   kable(
-    digits = 4,
-    caption = "France mortality interval results at selected horizons"
+    format = "html",
+    escape = FALSE,
+    col.names = c(
+      "Sex", "h", "CP",
+      "Bench.", "IC", "CV",
+      "Bench.", "IC", "CV",
+      "Bench.", "IC", "CV"
+    ),
+    caption = "France mortality interval performance over all ten horizons"
+  ) |>
+  kableExtra::add_header_above(
+    c(" " = 3, "ECP" = 3, "CPD" = 3, "Score" = 3)
   )
+
+for (row_now in seq(2, nrow(mortality_interval_table), by = 2)) {
+  mortality_interval_kable <- mortality_interval_kable |>
+    kableExtra::row_spec(
+      row_now,
+      extra_css = "border-bottom: 1px solid #777;"
+    )
+}
+
+kableExtra::scroll_box(mortality_interval_kable, width = "100%")
+
+mortality_wis_tables <- list()
+
+for (sex_now in c("Female", "Male")) {
+  mortality_wis_tables[[sex_now]] <- mortality_wis_metrics |>
+    filter(Sex == sex_now) |>
+    group_by(h) |>
+    mutate(WIS = format_best_html(WIS, "purple")) |>
+    ungroup() |>
+    mutate(
+      Method = recode(
+        as.character(Method),
+        `Benchmark (FARFIMA(1,1,0))` = "FARFIMA(1,1,0)"
+      ),
+      Method = factor(Method, levels = c("FARFIMA(1,1,0)", "Functional IC", "CV"))
+    ) |>
+    dplyr::select(Method, h, WIS) |>
+    pivot_wider(names_from = h, values_from = WIS) |>
+    arrange(Method)
+
+  print(
+    mortality_wis_tables[[sex_now]] |>
+      kable(
+        format = "html",
+        escape = FALSE,
+        col.names = c("Method", paste0("h = ", 1:10)),
+        caption = paste(
+          "Weighted interval score for French",
+          tolower(sex_now),
+          "log mortality"
+        )
+      )
+  )
+}
 ```
 
 ```{r mortality-coverage-plot, fig.width=12, fig.height=7}
@@ -1626,55 +2163,71 @@ mortality_coverage_plot_data <- mortality_interval_metrics |>
     )
   )
 
-ggplot(
+mortality_coverage_plot <- ggplot(
   mortality_coverage_plot_data,
   aes(h, ECP, colour = Method, shape = Method, linetype = Method)
 ) +
-  geom_hline(aes(yintercept = 1 - alpha), colour = "grey50", linetype = 3) +
+  geom_hline(
+    aes(yintercept = 1 - alpha),
+    colour = "#333333",
+    linetype = "dashed",
+    linewidth = 1
+  ) +
   geom_line(linewidth = 0.9) +
   geom_point(size = 2.4) +
   facet_grid(Sex ~ `Interval level`) +
-  scale_colour_manual(values = method_palette, drop = FALSE) +
-  scale_shape_manual(values = method_shapes, drop = FALSE) +
-  scale_linetype_manual(values = method_linetypes, drop = FALSE) +
+  scale_colour_manual(
+    name = "Forecasting method",
+    values = method_palette,
+    labels = method_plot_labels,
+    drop = FALSE
+  ) +
+  scale_shape_manual(
+    name = "Forecasting method",
+    values = method_shapes,
+    labels = method_plot_labels,
+    drop = FALSE
+  ) +
+  scale_linetype_manual(
+    name = "Forecasting method",
+    values = method_linetypes,
+    labels = method_plot_labels,
+    drop = FALSE
+  ) +
   scale_x_continuous(breaks = 1:10) +
-  coord_cartesian(ylim = c(0, 1)) +
+  scale_y_continuous(
+    breaks = seq(0.50, 1.00, by = 0.05),
+    labels = scales::number_format(accuracy = 0.01)
+  ) +
+  coord_cartesian(ylim = c(0.50, 1.00)) +
   labs(
-    title = "France mortality empirical coverage probability",
-    subtitle = "Horizontal lines show the nominal coverage",
     x = "Forecast horizon h",
     y = "ECP"
-  )
-```
-
-```{r mortality-score-ratio-plot, fig.width=12, fig.height=7}
-mortality_score_ratio_plot_data <- mortality_interval_ratios |>
-  filter(Method != "Benchmark (FARFIMA(1,1,0))") |>
-  mutate(
-    `Interval level` = factor(
-      scales::percent(1 - alpha, accuracy = 1),
-      levels = c("80%", "95%")
-    )
+  ) +
+  theme(
+    legend.position = "top",
+    legend.box = "horizontal"
   )
 
-ggplot(
-  mortality_score_ratio_plot_data,
-  aes(h, `Score ratio`, colour = Method, shape = Method, linetype = Method)
-) +
-  geom_hline(yintercept = 1, linetype = 3, colour = "grey50") +
-  geom_line(linewidth = 0.9) +
-  geom_point(size = 2.4) +
-  facet_grid(Sex ~ `Interval level`, scales = "free_y") +
-  scale_colour_manual(values = method_palette, breaks = c("Functional IC", "CV")) +
-  scale_shape_manual(values = method_shapes, breaks = c("Functional IC", "CV")) +
-  scale_linetype_manual(values = method_linetypes, breaks = c("Functional IC", "CV")) +
-  scale_x_continuous(breaks = 1:10) +
-  labs(
-    title = "France mortality interval score ratios",
-    subtitle = "The horizontal line at one is the benchmark; lower values are better",
-    x = "Forecast horizon h",
-    y = "Score ratio"
-  )
+mortality_coverage_plot
+
+ggsave(
+  "Empirical Study/Empirical Plots/France_mortality_ecp.pdf",
+  mortality_coverage_plot,
+  width = 12,
+  height = 7.5,
+  dpi = 1200,
+  bg = "white"
+)
+
+ggsave(
+  "Empirical Study/Thesis Draft/Figures/Empirical/France_mortality_ecp.pdf",
+  mortality_coverage_plot,
+  width = 12,
+  height = 7.5,
+  dpi = 1200,
+  bg = "white"
+)
 ```
 
 ### France mortality point and interval forecasts
@@ -1705,7 +2258,7 @@ for (sex_now in names(mortality_forecast_results)) {
     mutate(
       `Plot method` = recode(
         as.character(Method),
-        `Benchmark (FARFIMA(1,1,0))` = "Benchmark"
+        `Benchmark (FARFIMA(1,1,0))` = "FARFIMA(1,1,0)"
       ),
       `Plot method` = factor(`Plot method`, levels = plot_method_levels)
     )
@@ -1730,7 +2283,7 @@ for (sex_now in names(mortality_forecast_results)) {
           fill = `Plot method`,
           group = `Plot method`
         ),
-        alpha = 0.14,
+        alpha = 0.70,
         colour = NA
       ) +
       geom_line(
@@ -1772,18 +2325,35 @@ for (sex_now in names(mortality_forecast_results)) {
         fill = guide_legend(order = 2, override.aes = list(alpha = 0.7))
       ) +
       labs(
-        title = paste("France", tolower(sex_now), interval_now, "mortality forecasts"),
-        subtitle = "Raw observed curve: black solid line; forecasts and bands use matching method colours",
         x = "Age",
         y = "Log mortality rate"
       ) +
       theme(
+        legend.position = "top",
         legend.box = "vertical",
         plot.margin = margin(8, 8, 8, 16)
       )
 
     print(mortality_forecast_plot)
+
+    ggsave(
+      filename = file.path(
+        "Empirical Study",
+        "Empirical Plots",
+        paste0(
+          "France_",
+          tolower(sex_now),
+          "_mortality_forecasts_",
+          sub("%", "", interval_now),
+          ".pdf"
+        )
+      ),
+      plot = mortality_forecast_plot,
+      width = 12,
+      height = 10,
+      dpi = 1200,
+      bg = "white"
+    )
   }
 }
 ```
-

@@ -61,7 +61,7 @@ source("Forecasting/forecast_plot_helpers.R")
 
 # Simulation to compare far() and plug-in forecasting
 
-```{r}
+```{r ideal-simulation, eval=FALSE}
 grid_forecast <- expand.grid(
   T = c(500, 1000),
   d = c(1),
@@ -124,7 +124,8 @@ forecast_sim <- parallel_sim_forecasting_FARMA_compare_compact(
 
 
 ```{r}
-forecast_res = readRDS("Forecasting/ideal_forecast_summary.rds")
+future::plan(future::sequential)
+forecast_res = readRDS("ideal_forecast_summary.rds")
 ideal_wis <- make_wis_summary(forecast_res)
 ```
 
@@ -1748,39 +1749,9 @@ p_wis_ratio
 
 
 
-### Table of interval forecasting scores and WIS
+### Table of interval forecasting scores
 
 ```{r}
-ideal_wis_keys <- c(
-  "n", "d_true", "ar_strength", "ma_strength", "p_true", "q_true",
-  "window_type", "h"
-)
-
-ideal_wis_table <- ideal_wis %>%
-  filter(
-    n == 1000,
-    h %in% c(1, 5, 10),
-    window_type == "expanding"
-  ) %>%
-  select(all_of(ideal_wis_keys), method, WIS)
-
-if (nrow(ideal_wis_table) == 0L ||
-    any(!is.finite(ideal_wis_table$WIS)) ||
-    any(!ideal_wis_table$method %in% c("far", "farma"))) {
-  stop("Ideal WIS table data are missing or invalid.", call. = FALSE)
-}
-
-if (anyDuplicated(ideal_wis_table[c(ideal_wis_keys, "method")])) {
-  stop("Ideal WIS table keys are not unique.", call. = FALSE)
-}
-
-ideal_wis_table <- ideal_wis_table %>%
-  pivot_wider(
-    names_from = method,
-    values_from = WIS,
-    names_prefix = "WIS_"
-  )
-
 ideal_interval <- forecast_res$interval_summary %>%
   filter(
     n == 1000,
@@ -1788,7 +1759,6 @@ ideal_interval <- forecast_res$interval_summary %>%
     alpha %in% c(0.05, 0.20),
     h %in% c(1, 5, 10)
   ) %>%
-  left_join(ideal_wis_table, by = ideal_wis_keys) %>%
   mutate(
     Model = paste0("$(", p_true, ",1,", q_true, ")$"),
     Dependence = paste0("$(", ar_strength, ",", ma_strength, ")$"),
@@ -1799,238 +1769,96 @@ ideal_interval <- forecast_res$interval_summary %>%
     method = case_when(
       method == "far" ~ "Benchmark",
       method == "farma" ~ "Plugin",
-      TRUE ~ method
+      TRUE ~ NA_character_
     )
   ) %>%
+  filter(!is.na(method)) %>%
   select(
-    n,
-    p_true,
-    q_true,
-    ar_strength,
-    ma_strength,
-    Model,
-    Dependence,
-    alpha,
-    CP,
-    h,
-    method,
-    ECP,
-    CPD,
-    Score,
-    WIS_far,
-    WIS_farma
+    p_true, q_true, ar_strength, ma_strength,
+    Model, Dependence, alpha, CP, h, method, ECP, CPD, Score
   ) %>%
   pivot_wider(
     names_from = method,
     values_from = c(ECP, CPD, Score)
   ) %>%
-  arrange(
-    p_true,
-    q_true,
-    ar_strength,
-    ma_strength,
-    alpha,
-    h
-  )
+  arrange(p_true, q_true, ar_strength, ma_strength, alpha, h)
+
+ideal_interval_required <- c(
+  "ECP_Benchmark", "ECP_Plugin",
+  "CPD_Benchmark", "CPD_Plugin",
+  "Score_Benchmark", "Score_Plugin"
+)
 
 if (nrow(ideal_interval) == 0L ||
-    any(!is.finite(ideal_interval$WIS_far)) ||
-    any(!is.finite(ideal_interval$WIS_farma))) {
-  stop("Ideal interval table has missing or invalid WIS values.", call. = FALSE)
+    any(!is.finite(as.matrix(ideal_interval[ideal_interval_required])))) {
+  stop("Ideal interval table data are missing or invalid.", call. = FALSE)
 }
 
 ideal_interval <- ideal_interval %>%
   rowwise() %>%
   mutate(
-    min_CPD = min(
-      c(CPD_Benchmark, CPD_Plugin),
-      na.rm = TRUE
-    ),
-
-    min_Score = min(
-      c(Score_Benchmark, Score_Plugin),
-      na.rm = TRUE
-    ),
-
-    min_WIS = min(
-      c(WIS_far, WIS_farma),
-      na.rm = TRUE
-    ),
-
-    ECP_Benchmark_print = sprintf("%.3f", ECP_Benchmark),
-
-    ECP_Plugin_print = sprintf("%.3f", ECP_Plugin),
-
+    min_CPD = min(c(CPD_Benchmark, CPD_Plugin)),
+    min_Score = min(c(Score_Benchmark, Score_Plugin)),
+    ECP_Benchmark_print = sprintf("%.4f", ECP_Benchmark),
+    ECP_Plugin_print = sprintf("%.4f", ECP_Plugin),
     CPD_Benchmark_print = ifelse(
       isTRUE(all.equal(CPD_Benchmark, min_CPD)),
-      paste0(
-        "\\textcolor{red}{\\textbf{",
-        sprintf("%.3f", CPD_Benchmark),
-        "}}"
-      ),
-      sprintf("%.3f", CPD_Benchmark)
+      paste0("\\textcolor{red}{\\textbf{", sprintf("%.4f", CPD_Benchmark), "}}"),
+      sprintf("%.4f", CPD_Benchmark)
     ),
-
     CPD_Plugin_print = ifelse(
       isTRUE(all.equal(CPD_Plugin, min_CPD)),
-      paste0(
-        "\\textcolor{red}{\\textbf{",
-        sprintf("%.3f", CPD_Plugin),
-        "}}"
-      ),
-      sprintf("%.3f", CPD_Plugin)
+      paste0("\\textcolor{red}{\\textbf{", sprintf("%.4f", CPD_Plugin), "}}"),
+      sprintf("%.4f", CPD_Plugin)
     ),
-
     Score_Benchmark_print = ifelse(
       isTRUE(all.equal(Score_Benchmark, min_Score)),
-      paste0(
-        "\\textcolor{blue}{\\textbf{",
-        sprintf("%.3f", Score_Benchmark),
-        "}}"
-      ),
-      sprintf("%.3f", Score_Benchmark)
+      paste0("\\textcolor{blue}{\\textbf{", sprintf("%.4f", Score_Benchmark), "}}"),
+      sprintf("%.4f", Score_Benchmark)
     ),
-
     Score_Plugin_print = ifelse(
       isTRUE(all.equal(Score_Plugin, min_Score)),
-      paste0(
-        "\\textcolor{blue}{\\textbf{",
-        sprintf("%.3f", Score_Plugin),
-        "}}"
-      ),
-      sprintf("%.3f", Score_Plugin)
-    ),
-
-    WIS_Benchmark_print = ifelse(
-      isTRUE(all.equal(WIS_far, min_WIS)),
-      paste0(
-        "\\textcolor{purple}{\\textbf{",
-        sprintf("%.4f", WIS_far),
-        "}}"
-      ),
-      sprintf("%.4f", WIS_far)
-    ),
-
-    WIS_Plugin_print = ifelse(
-      isTRUE(all.equal(WIS_farma, min_WIS)),
-      paste0(
-        "\\textcolor{purple}{\\textbf{",
-        sprintf("%.4f", WIS_farma),
-        "}}"
-      ),
-      sprintf("%.4f", WIS_farma)
-    ),
-
-    WIS_Benchmark_print = ifelse(
-      CP == "95\\%",
-      WIS_Benchmark_print,
-      ""
-    ),
-
-    WIS_Plugin_print = ifelse(
-      CP == "95\\%",
-      WIS_Plugin_print,
-      ""
+      paste0("\\textcolor{blue}{\\textbf{", sprintf("%.4f", Score_Plugin), "}}"),
+      sprintf("%.4f", Score_Plugin)
     )
   ) %>%
   ungroup()
 
 cp_groups <- ideal_interval %>%
   mutate(row_id = row_number()) %>%
-  group_by(
-    Model,
-    Dependence,
-    CP
-  ) %>%
-  summarise(
-    end = max(row_id),
-    .groups = "drop"
-  )
+  group_by(Model, Dependence, CP) %>%
+  summarise(end = max(row_id), .groups = "drop")
 
 dep_groups <- ideal_interval %>%
   mutate(row_id = row_number()) %>%
-  group_by(
-    Model,
-    Dependence
-  ) %>%
-  summarise(
-    end = max(row_id),
-    .groups = "drop"
-  )
+  group_by(Model, Dependence) %>%
+  summarise(end = max(row_id), .groups = "drop")
 
 model_groups <- ideal_interval %>%
   mutate(row_id = row_number()) %>%
   group_by(Model) %>%
-  summarise(
-    end = max(row_id),
-    .groups = "drop"
-  )
+  summarise(end = max(row_id), .groups = "drop")
 
 ideal_interval_print <- ideal_interval %>%
-  group_by(
-    Model
-  ) %>%
-  mutate(
-    Model_show = ifelse(
-      row_number() == 1,
-      Model,
-      ""
-    )
-  ) %>%
+  group_by(Model) %>%
+  mutate(Model_show = ifelse(row_number() == 1, Model, "")) %>%
   ungroup() %>%
-  group_by(
-    Model,
-    Dependence
-  ) %>%
-  mutate(
-    Dependence_show = ifelse(
-      row_number() == 1,
-      Dependence,
-      ""
-    )
-  ) %>%
+  group_by(Model, Dependence) %>%
+  mutate(Dependence_show = ifelse(row_number() == 1, Dependence, "")) %>%
   ungroup() %>%
-  group_by(
-    Model,
-    Dependence,
-    CP
-  ) %>%
-  mutate(
-    CP_show = ifelse(
-      row_number() == 1,
-      CP,
-      ""
-    )
-  ) %>%
+  group_by(Model, Dependence, CP) %>%
+  mutate(CP_show = ifelse(row_number() == 1, CP, "")) %>%
   ungroup() %>%
   select(
-    Model_show,
-    Dependence_show,
-    CP_show,
-    h,
-    ECP_Benchmark_print,
-    ECP_Plugin_print,
-    CPD_Benchmark_print,
-    CPD_Plugin_print,
-    Score_Benchmark_print,
-    Score_Plugin_print,
-    WIS_Benchmark_print,
-    WIS_Plugin_print
+    Model_show, Dependence_show, CP_show, h,
+    ECP_Benchmark_print, ECP_Plugin_print,
+    CPD_Benchmark_print, CPD_Plugin_print,
+    Score_Benchmark_print, Score_Plugin_print
   )
 
 names(ideal_interval_print) <- c(
-  "$(p,d,q)$",
-  "$(\\psi,\\nu)$",
-  "CP",
-  "$h$",
-  "Bench.",
-  "Plugin",
-  "Bench.",
-  "Plugin",
-  "Bench.",
-  "Plugin",
-  "Bench.",
-  "Plugin"
+  "$(p,d,q)$", "$(\\psi,\\nu)$", "CP", "$h$",
+  "Bench.", "Plugin", "Bench.", "Plugin", "Bench.", "Plugin"
 )
 
 latex_table <- ideal_interval_print %>%
@@ -2039,60 +1867,40 @@ latex_table <- ideal_interval_print %>%
     booktabs = TRUE,
     longtable = TRUE,
     escape = FALSE,
-    align = rep("c", 12),
+    align = rep("c", 10),
     caption = paste0(
       "Averaged interval forecasting results for the ideal FARFIMA setting with $T=1000$ ",
       "under the expanding-window scheme. Results are reported for nominal ",
       "coverage probabilities of 95\\% and 80\\%. ",
       "The FARFIMA$(1,1,0)$ model is used as the benchmark. ",
       "The smallest CPD within each setting is highlighted in red, ",
-      "the smallest interval score in blue, and the smallest WIS in purple. ",
-      "WIS combines the 80\\% and 95\\% prediction intervals and is reported ",
-      "once per horizon in the 95\\% rows."
+      "and the smallest interval score is highlighted in blue."
     ),
     label = "tab:ideal_interval_expanding"
   ) %>%
   add_header_above(
-    c(
-      " " = 4,
-      "ECP" = 2,
-      "CPD" = 2,
-      "IS" = 2,
-      "WIS" = 2
-    ),
+    c(" " = 4, "ECP" = 2, "CPD" = 2, "IS" = 2),
     escape = FALSE
   ) %>%
-  kable_styling(
-    latex_options = "repeat_header",
-    font_size = 7
-  )
+  kable_styling(latex_options = "repeat_header", font_size = 8)
 
 for (i in seq_len(max(nrow(cp_groups) - 1L, 0L))) {
   if (!(cp_groups$end[i] %in% dep_groups$end)) {
     latex_table <- latex_table %>%
-      row_spec(
-        cp_groups$end[i],
-        extra_latex_after = "\\cmidrule(lr){3-10}"
-      )
+      row_spec(cp_groups$end[i], extra_latex_after = "\\cmidrule(lr){3-10}")
   }
 }
 
 for (i in seq_len(max(nrow(dep_groups) - 1L, 0L))) {
   if (!(dep_groups$end[i] %in% model_groups$end)) {
     latex_table <- latex_table %>%
-      row_spec(
-        dep_groups$end[i],
-        extra_latex_after = "\\cmidrule(lr){2-12}"
-      )
+      row_spec(dep_groups$end[i], extra_latex_after = "\\cmidrule(lr){2-10}")
   }
 }
 
 for (i in seq_len(max(nrow(model_groups) - 1L, 0L))) {
   latex_table <- latex_table %>%
-    row_spec(
-      model_groups$end[i],
-      extra_latex_after = "\\midrule"
-    )
+    row_spec(model_groups$end[i], extra_latex_after = "\\midrule")
 }
 
 latex_table <- sub(
@@ -2103,9 +1911,128 @@ latex_table <- sub(
 )
 
 cat("\\begingroup\n")
-cat("\\setlength{\\tabcolsep}{2pt}\n")
+cat("\\setlength{\\tabcolsep}{3pt}\n")
 cat("\\setlength{\\LTleft}{\\fill}\n")
 cat("\\setlength{\\LTright}{\\fill}\n")
 cat(latex_table)
+cat("\\endgroup\n")
+```
+
+
+### Table of weighted interval scores
+
+```{r}
+ideal_wis_print <- ideal_wis %>%
+  filter(
+    n == 1000,
+    window_type == "expanding",
+    h %in% 1:10
+  ) %>%
+  mutate(
+    Model = paste0("$(", p_true, ",1,", q_true, ")$"),
+    Dependence = paste0("$(", ar_strength, ",", ma_strength, ")$"),
+    Method = case_when(
+      method == "far" ~ "FARFIMA$(1,1,0)$",
+      method == "farma" ~ "Plugin",
+      TRUE ~ NA_character_
+    ),
+    Method = factor(Method, levels = c("FARFIMA$(1,1,0)$", "Plugin"))
+  ) %>%
+  filter(!is.na(Method)) %>%
+  select(p_true, q_true, ar_strength, ma_strength, Model, Dependence, Method, h, WIS)
+
+if (nrow(ideal_wis_print) == 0L || any(!is.finite(ideal_wis_print$WIS))) {
+  stop("Ideal WIS table data are missing or invalid.", call. = FALSE)
+}
+
+if (anyDuplicated(ideal_wis_print[c(
+  "p_true", "q_true", "ar_strength", "ma_strength", "Method", "h"
+)])) {
+  stop("Ideal WIS table keys are not unique.", call. = FALSE)
+}
+
+ideal_wis_print <- ideal_wis_print %>%
+  group_by(Model, Dependence, h) %>%
+  mutate(
+    min_WIS = min(WIS),
+    WIS_print = ifelse(
+      round(WIS, 4) == round(min_WIS, 4),
+      paste0("\\textcolor{purple}{\\textbf{", sprintf("%.4f", WIS), "}}"),
+      sprintf("%.4f", WIS)
+    )
+  ) %>%
+  ungroup() %>%
+  select(Model, Dependence, Method, h, WIS_print) %>%
+  pivot_wider(names_from = h, values_from = WIS_print, names_prefix = "h_") %>%
+  arrange(Model, Dependence, Method)
+
+wis_dep_groups <- ideal_wis_print %>%
+  mutate(row_id = row_number()) %>%
+  group_by(Model, Dependence) %>%
+  summarise(end = max(row_id), .groups = "drop")
+
+wis_model_groups <- ideal_wis_print %>%
+  mutate(row_id = row_number()) %>%
+  group_by(Model) %>%
+  summarise(end = max(row_id), .groups = "drop")
+
+ideal_wis_print <- ideal_wis_print %>%
+  group_by(Model) %>%
+  mutate(Model_show = ifelse(row_number() == 1, Model, "")) %>%
+  ungroup() %>%
+  group_by(Model, Dependence) %>%
+  mutate(Dependence_show = ifelse(row_number() == 1, Dependence, "")) %>%
+  ungroup() %>%
+  select(
+    Model_show, Dependence_show, Method,
+    all_of(paste0("h_", 1:10))
+  )
+
+names(ideal_wis_print) <- c(
+  "$(p,d,q)$", "$(\\psi,\\nu)$", "Method", paste0("$", 1:10, "$")
+)
+
+wis_latex_table <- ideal_wis_print %>%
+  kbl(
+    format = "latex",
+    booktabs = TRUE,
+    longtable = TRUE,
+    escape = FALSE,
+    align = c("c", "c", "l", rep("r", 10)),
+    caption = paste0(
+      "Weighted interval scores for the ideal FARFIMA setting with $T=1000$ ",
+      "under the expanding-window scheme. WIS combines the 80\\% and 95\\% ",
+      "prediction intervals. The smallest WIS within each setting and horizon ",
+      "is highlighted in purple."
+    ),
+    label = "tab:ideal_wis_expanding"
+  ) %>%
+  add_header_above(c(" " = 3, "Forecast horizon $h$" = 10), escape = FALSE) %>%
+  kable_styling(latex_options = "repeat_header", font_size = 7)
+
+for (i in seq_len(max(nrow(wis_dep_groups) - 1L, 0L))) {
+  if (!(wis_dep_groups$end[i] %in% wis_model_groups$end)) {
+    wis_latex_table <- wis_latex_table %>%
+      row_spec(wis_dep_groups$end[i], extra_latex_after = "\\cmidrule(lr){2-13}")
+  }
+}
+
+for (i in seq_len(max(nrow(wis_model_groups) - 1L, 0L))) {
+  wis_latex_table <- wis_latex_table %>%
+    row_spec(wis_model_groups$end[i], extra_latex_after = "\\midrule")
+}
+
+wis_latex_table <- sub(
+  "\\begin{longtable}[t]",
+  "\\begin{longtable}[c]",
+  wis_latex_table,
+  fixed = TRUE
+)
+
+cat("\\begingroup\n")
+cat("\\setlength{\\tabcolsep}{2pt}\n")
+cat("\\setlength{\\LTleft}{\\fill}\n")
+cat("\\setlength{\\LTright}{\\fill}\n")
+cat(wis_latex_table)
 cat("\\endgroup\n")
 ```
