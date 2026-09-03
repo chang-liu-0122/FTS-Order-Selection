@@ -125,7 +125,6 @@ forecast_sim <- parallel_sim_forecasting_FARMA_compare_compact(
 
 ## Analysis
 
-
 ```{r}
 future::plan(future::sequential)
 forecast_res = readRDS("ideal_forecast_summary.rds")
@@ -133,7 +132,7 @@ ideal_wis <- make_wis_summary(forecast_res)
 ```
 
 
-### Plots of RMSE ratio
+### Plots of RMSPE ratio
 ```{r}
 library(tidyverse)
 library(cowplot)
@@ -528,7 +527,7 @@ combine_four_forecast_models_shared_axes <- function(
     height = 12,
     y_limits = NULL,
     value_col = "rmse_ratio",
-    y_axis_label = "Root mean squared error ratio to FARFIMA(1,1,0)") {
+    y_axis_label = "RMSPE ratio to FARFIMA(1,1,0)") {
   assemble_ratio_panel_grid(
     df = df,
     models = models,
@@ -583,7 +582,7 @@ p_forecast_ratio
 ```
 
 
-### Table of RMSE and MAE
+### Table of RMSPE and MAPE
 
 ```{r}
 forecast_table <- forecast_res$ratio_summary %>%
@@ -743,16 +742,16 @@ latex_table <- forecast_table_print %>%
       "Averaged forecasting results for the ideal FARFIMA setting with $T=1000$ ",
       "under the expanding-window scheme. ",
       "The FARFIMA$(1,1,0)$ model is used as the benchmark. ",
-      "The smallest RMSE within each setting is highlighted in red, ",
-      "and the smallest MAE is highlighted in blue."
+      "The smallest RMSPE within each setting is highlighted in red, ",
+      "and the smallest MAPE is highlighted in blue."
     ),
     label = "tab:ideal_forecast_expanding"
   ) %>%
   add_header_above(
     c(
       " " = 3,
-      "RMSE" = 2,
-      "MAE" = 2
+      "RMSPE" = 2,
+      "MAPE" = 2
     ),
     escape = FALSE
   ) %>%
@@ -1024,7 +1023,7 @@ combine_four_ecp_models_shared_axes <- function(df,
                                                 width = 16,
                                                 height = 12,
                                                 y_limits = NULL,
-                                                y_axis_label = "Empirical coverage probability") {
+                                                y_axis_label = "ECP") {
   if (length(models) != 4) {
     stop("`models` must contain exactly four model labels.")
   }
@@ -1376,7 +1375,7 @@ combine_four_score_ratio_models_shared_axes <- function(df,
                                                         width = 16,
                                                         height = 12,
                                                         y_limits = NULL,
-                                                        y_axis_label = "Interval score ratio") {
+                                                        y_axis_label = "IS ratio") {
   combine_four_forecast_models_shared_axes(
     df = df,
     models = models,
@@ -1415,7 +1414,7 @@ p_score_ratio_95 <- combine_four_score_ratio_models_shared_axes(
   file_name = NULL,
   width = 16,
   height = 14,
-  y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"
+  y_axis_label = "IS ratio to FARFIMA(1,1,0)"
 )
 
 score_ratio_80 <- make_score_ratio_summary(
@@ -1439,7 +1438,7 @@ p_score_ratio_80 <- combine_four_score_ratio_models_shared_axes(
   file_name = file.path(ideal_plot_dir, "forecast_score_ratio_80_2x2.pdf"),
   width = 16,
   height = 14,
-  y_axis_label = "Interval score ratio to FARFIMA(1,1,0)"
+  y_axis_label = "IS ratio to FARFIMA(1,1,0)"
 )
 
 ```
@@ -1567,7 +1566,7 @@ p_wis_ratio <- combine_four_score_ratio_models_shared_axes(
   file_name = file.path(ideal_plot_dir, "forecast_wis_ratio_2x2.pdf"),
   width = 16,
   height = 14,
-  y_axis_label = "Weighted interval score ratio to FARFIMA(1,1,0)"
+  y_axis_label = "WIS ratio to FARFIMA(1,1,0)"
 )
 
 p_wis_ratio

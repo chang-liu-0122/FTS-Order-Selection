@@ -1,5 +1,5 @@
 ---
-title: "Functional fertility-rate changes in Slovakia and France"
+title: "French functional fertility-rate changes and mortality"
 subtitle: "Fractional integration, order selection, and conformal forecasting"
 output:
   html_document:
@@ -262,7 +262,7 @@ fertility_change <- function(x) {
 }
 
 fer <- read_rds("Empirical Study/demog_list_asfr.rds")
-country_codes <- c(Slovakia = "SVK", France = "FRATNP")
+country_codes <- c(France = "FRATNP")
 
 fertility_data <- list()
 
@@ -280,15 +280,7 @@ for (country in names(country_codes)) {
   )
 }
 
-slovakia_change <- fertility_data$Slovakia$smooth_change
 france_change <- fertility_data$France$smooth_change
-
-slovakia_centered <- sweep(
-  slovakia_change,
-  1,
-  rowMeans(slovakia_change),
-  "-"
-)
 
 france_centered <- sweep(
   france_change,
@@ -343,26 +335,6 @@ plot(
 
 dev.off()
 
-savepdf("Empirical Study/Empirical Plots/Slovakia_fertility_smooth_rainbow_plot", width = 12, height = 10)
-
-plot(
-  fts(1:nrow(fertility_data$Slovakia$smooth), fertility_data$Slovakia$smooth),
-  xlab = "Age",
-  ylab = "Fertility rate"
-)
-
-dev.off()
-
-savepdf("Empirical Study/Empirical Plots/Slovakia_fertility_smooth_change_rainbow_plot", width = 12, height = 10)
-
-plot(
-  fts(1:nrow(fertility_data$Slovakia$smooth_change), fertility_data$Slovakia$smooth_change),
-  xlab = "Age",
-  ylab = "Incremental fertility rate"
-)
-
-dev.off()
-
 ```
 
 
@@ -370,41 +342,6 @@ dev.off()
 
 
 ```{r facf-fpacf-plots}
-savepdf(
-  "Empirical Study/Empirical Plots/Slovakia_fertility_change_facf",
-  width = 12,
-  height = 10,
-  toplines = 0.8
-)
-
-slovakia_identification <- fdaACF::obtain_FACF(
-  t(slovakia_change),
-  v = 1:35,
-  nlags = 20,
-  ci = 0.95,
-  estimation = "MC",
-  figure = FALSE
-)
-
-plot_FACF_topright(
-  rho = slovakia_identification$rho,
-  Blueline = slovakia_identification$Blueline,
-  ci = 0.95,
-  ylab = "Incremental fertility rate fACF",
-  yaxt = "n",
-  ylim = c(0, 0.5)
-)
-
-
-axis(
-  side = 2,
-  at = seq(0, 0.5, by = 0.05),
-  labels = seq(0, 0.5, by = 0.05)
-)
-
-dev.off()
-
-
 savepdf(
   "Empirical Study/Empirical Plots/France_fertility_change_facf",
   width = 12,
@@ -442,18 +379,9 @@ dev.off()
 
 ## Stationarity checks
 
-The stationarity checks use all available smoothed fertility-rate changes for each country. The null hypothesis of `ftsa::T_stationary()` is that the functional time series is stationary.
+The stationarity check uses all available smoothed French fertility-rate changes. The null hypothesis of `ftsa::T_stationary()` is that the functional time series is stationary.
 
 ```{r stationarity-tests}
-set.seed(123)
-ftsa::T_stationary(
-  sample = fertility_data$Slovakia$smooth_change,
-  cumulative_var = 0.95,
-  J = 100,
-  MC_rep = 5000,
-  pivotal = TRUE
-)
-
 set.seed(123)
 ftsa::T_stationary(
   sample = fertility_data$France$smooth_change,
@@ -731,8 +659,8 @@ point_ratios <- point_metrics |>
     by = c("Country", "h")
   ) |>
   mutate(
-    `RMSE ratio` = RMSE / benchmark_RMSE,
-    `MAE ratio` = MAE / benchmark_MAE
+    `RMSPE ratio` = RMSE / benchmark_RMSE,
+    `MAPE ratio` = MAE / benchmark_MAE
   )
 
 interval_ratios <- interval_metrics |>
@@ -756,15 +684,15 @@ wis_ratios <- wis_metrics |>
 
 ### Point accuracy
 
-The point-forecast table reports RMSE and MAE for all ten horizons. The smallest RMSE within each country and horizon is red, and the smallest MAE is blue. Forecasts are fitted to the smoothed changes and evaluated against the corresponding raw fertility-rate changes.
+The point-forecast table reports RMSPE and MAPE for all ten horizons. The smallest RMSPE within each country and horizon is red, and the smallest MAPE is blue. Forecasts are fitted to the smoothed changes and evaluated against the corresponding raw fertility-rate changes.
 
 ```{r point-wis-table}
 point_metrics |>
   filter(Country == "France") |>
   group_by(Country, h) |>
   mutate(
-    RMSE = format_best_html(RMSE, "red"),
-    MAE = format_best_html(MAE, "blue")
+    RMSPE = format_best_html(RMSE, "red"),
+    MAPE = format_best_html(MAE, "blue")
   ) |>
   ungroup() |>
   mutate(
@@ -774,10 +702,10 @@ point_metrics |>
     ),
     Method = factor(Method, levels = c("Benchmark", "Functional IC", "CV"))
   ) |>
-  dplyr::select(Country, h, Method, RMSE, MAE) |>
+  dplyr::select(Country, h, Method, RMSPE, MAPE) |>
   pivot_wider(
     names_from = Method,
-    values_from = c(RMSE, MAE),
+    values_from = c(RMSPE, MAPE),
     names_glue = "{.value}_{Method}"
   ) |>
   arrange(Country, h) |>
@@ -791,7 +719,7 @@ point_metrics |>
     ),
     caption = "Fertility point forecast accuracy over all ten horizons"
   ) |>
-  kableExtra::add_header_above(c(" " = 2, "RMSE" = 3, "MAE" = 3))
+  kableExtra::add_header_above(c(" " = 2, "RMSPE" = 3, "MAPE" = 3))
 ```
 
 ```{r fertility-ratio-plots, fig.width=12, fig.height=6}
@@ -800,7 +728,7 @@ fertility_point_ratio_data <- point_ratios |>
     Country == "France",
     Method != "Benchmark (FARFIMA(1,1,0))"
   ) |>
-  dplyr::select(Method, h, `RMSE ratio`, `MAE ratio`) |>
+  dplyr::select(Method, h, `RMSPE ratio`, `MAPE ratio`) |>
   pivot_longer(
     ends_with("ratio"),
     names_to = "Metric",
@@ -809,10 +737,10 @@ fertility_point_ratio_data <- point_ratios |>
   mutate(
     Metric = recode(
       Metric,
-      `RMSE ratio` = "RMSE",
-      `MAE ratio` = "MAE"
+      `RMSPE ratio` = "RMSPE",
+      `MAPE ratio` = "MAPE"
     ),
-    Metric = factor(Metric, levels = c("RMSE", "MAE"))
+    Metric = factor(Metric, levels = c("RMSPE", "MAPE"))
   )
 
 fertility_point_ratio_plot <- ggplot(
@@ -916,7 +844,7 @@ fertility_interval_score_ratio_plot <- ggplot(
   scale_x_continuous(breaks = 1:10) +
   labs(
     x = "Forecast horizon h",
-    y = "Interval score ratio to FARFIMA(1,1,0)"
+    y = "IS ratio to FARFIMA(1,1,0)"
   ) +
   theme(
     legend.position = "top",
@@ -969,7 +897,7 @@ fertility_weighted_interval_score_ratio_plot <- ggplot(
   scale_x_continuous(breaks = 1:10) +
   labs(
     x = "Forecast horizon h",
-    y = "Weighted interval score ratio to FARFIMA(1,1,0)"
+    y = "WIS ratio to FARFIMA(1,1,0)"
   ) +
   theme(
     legend.position = "top",
@@ -1143,7 +1071,7 @@ fertility_coverage_plot <- ggplot(
   coord_cartesian(ylim = c(0.50, 1.00)) +
   labs(
     x = "Forecast horizon h",
-    y = "Empirical coverage probability"
+    y = "ECP"
   ) +
   theme(
     legend.position = "top",
@@ -1184,10 +1112,10 @@ ggplot(
   scale_linetype_manual(values = method_linetypes, drop = FALSE) +
   scale_x_continuous(breaks = 1:10) +
   labs(
-    title = "Coverage probability deviation",
+    title = "CPD",
     subtitle = "Smaller values are closer to nominal coverage",
     x = "Forecast horizon h",
-    y = "Absolute coverage deviation"
+    y = "CPD"
   )
 ```
 
@@ -1788,8 +1716,8 @@ mortality_point_ratios <- mortality_point_metrics |>
     by = c("Sex", "h")
   ) |>
   mutate(
-    `RMSE ratio` = RMSE / benchmark_RMSE,
-    `MAE ratio` = MAE / benchmark_MAE
+    `RMSPE ratio` = RMSE / benchmark_RMSE,
+    `MAPE ratio` = MAE / benchmark_MAE
   )
 
 mortality_interval_ratios <- mortality_interval_metrics |>
@@ -1817,8 +1745,8 @@ mortality_wis_ratios <- mortality_wis_metrics |>
 mortality_point_metrics |>
   group_by(Sex, h) |>
   mutate(
-    RMSE = format_best_html(RMSE, "red"),
-    MAE = format_best_html(MAE, "blue")
+    RMSPE = format_best_html(RMSE, "red"),
+    MAPE = format_best_html(MAE, "blue")
   ) |>
   ungroup() |>
   mutate(
@@ -1828,10 +1756,10 @@ mortality_point_metrics |>
     ),
     Method = factor(Method, levels = c("Benchmark", "Functional IC", "CV"))
   ) |>
-  dplyr::select(Sex, h, Method, RMSE, MAE) |>
+  dplyr::select(Sex, h, Method, RMSPE, MAPE) |>
   pivot_wider(
     names_from = Method,
-    values_from = c(RMSE, MAE),
+    values_from = c(RMSPE, MAPE),
     names_glue = "{.value}_{Method}"
   ) |>
   arrange(Sex, h) |>
@@ -1845,13 +1773,13 @@ mortality_point_metrics |>
     ),
     caption = "France mortality point forecast accuracy over all ten horizons"
   ) |>
-  kableExtra::add_header_above(c(" " = 2, "RMSE" = 3, "MAE" = 3))
+  kableExtra::add_header_above(c(" " = 2, "RMSPE" = 3, "MAPE" = 3))
 ```
 
 ```{r mortality-ratio-plots, fig.width=12, fig.height=7.5}
 mortality_point_ratio_data <- mortality_point_ratios |>
   filter(Method != "Benchmark (FARFIMA(1,1,0))") |>
-  dplyr::select(Sex, Method, h, `RMSE ratio`, `MAE ratio`) |>
+  dplyr::select(Sex, Method, h, `RMSPE ratio`, `MAPE ratio`) |>
   pivot_longer(
     ends_with("ratio"),
     names_to = "Metric",
@@ -1860,10 +1788,10 @@ mortality_point_ratio_data <- mortality_point_ratios |>
   mutate(
     Metric = recode(
       Metric,
-      `RMSE ratio` = "RMSE",
-      `MAE ratio` = "MAE"
+      `RMSPE ratio` = "RMSPE",
+      `MAPE ratio` = "MAPE"
     ),
-    Metric = factor(Metric, levels = c("RMSE", "MAE"))
+    Metric = factor(Metric, levels = c("RMSPE", "MAPE"))
   )
 
 mortality_point_ratio_plot <- ggplot(
@@ -1966,7 +1894,7 @@ mortality_interval_score_ratio_plot <- ggplot(
   scale_x_continuous(breaks = 1:10) +
   labs(
     x = "Forecast horizon h",
-    y = "Interval score ratio to FARFIMA(1,1,0)"
+    y = "IS ratio to FARFIMA(1,1,0)"
   ) +
   theme(
     legend.position = "top",
@@ -2017,7 +1945,7 @@ mortality_weighted_interval_score_ratio_plot <- ggplot(
   scale_x_continuous(breaks = 1:10) +
   labs(
     x = "Forecast horizon h",
-    y = "Weighted interval score ratio to FARFIMA(1,1,0)"
+    y = "WIS ratio to FARFIMA(1,1,0)"
   ) +
   theme(
     legend.position = "top",
@@ -2199,7 +2127,7 @@ mortality_coverage_plot <- ggplot(
   coord_cartesian(ylim = c(0.50, 1.00)) +
   labs(
     x = "Forecast horizon h",
-    y = "Empirical coverage probability"
+    y = "ECP"
   ) +
   theme(
     legend.position = "top",

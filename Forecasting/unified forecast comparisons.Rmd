@@ -140,7 +140,7 @@ out_ic <- parallel_repeat_full_forecasting_pipeline_compact_order_method(
 ```{r unified-simulation-extract, eval=FALSE}
 pipeline_metrics <- extract_required_metrics_from_compact_order_method(
   out_ic,
-  rmse_ratio_threshold = 10
+  rmse_ratio_threshold = 2
 )
 ```
 
@@ -798,8 +798,7 @@ p_order_T500 <- combine_four_order_accuracy_fixedT(
 
 
 
-### Plots of RMSE ratio
-
+### Plots of RMSPE ratio
 
 ```{r}
 plot_base_size <- 25
@@ -1066,7 +1065,7 @@ combine_four_unified_rmse_ratio_models <- function(df,
                                                    common_y = FALSE,
                                                    value_col = "RMSE_ratio",
                                                    y_limits = NULL,
-                                                   y_axis_label = "Root mean squared error ratio to FARFIMA(1,1,0)") {
+                                                   y_axis_label = "RMSPE ratio to FARFIMA(1,1,0)") {
   models <- c("(1,0)", "(0,1)", "(2,0)", "(1,1)")
   titles <- c(
     "FARFIMA(1,d,0)",
@@ -1126,7 +1125,7 @@ p_unified_rmse_11 <-
   ) +
   labs(
     x = "Forecast horizon h",
-    y = "Root mean squared error ratio to FARFIMA(1,1,0)",
+    y = "RMSPE ratio to FARFIMA(1,1,0)",
     colour = "Order selection",
     linetype = "Order selection",
     shape = "Order selection"
@@ -1152,7 +1151,7 @@ ggsave(
 ```
 
 
-#### Table of RMSE and MAE
+#### Table of RMSPE and MAPE
 
 ```{r}
 benchmark_res <- unified_forecast_res$ratio_summary %>%
@@ -1311,13 +1310,13 @@ latex_table <- unified_table_print %>%
       "Averaged forecasting results for the unified setting with $T=1000$ ",
       "under the expanding-window scheme. Results are averaged over the ",
       "dependence-strength settings. Model orders are reported as $(p,q)$. ",
-      "The smallest RMSE within each setting is highlighted in red, ",
-      "and the smallest MAE is highlighted in blue."
+      "The smallest RMSPE within each setting is highlighted in red, ",
+      "and the smallest MAPE is highlighted in blue."
     ),
     label = "tab:unified_forecast_expanding"
   ) %>%
   add_header_above(
-    c(" " = 3, "RMSE" = 3, "MAE" = 3),
+    c(" " = 3, "RMSPE" = 3, "MAPE" = 3),
     escape = FALSE
   ) %>%
   kable_styling(latex_options = "repeat_header", font_size = 8)
@@ -1700,7 +1699,7 @@ combine_four_unified_ecp_models_shared_axes <- function(
       height = 0.89
     ) +
     cowplot::draw_label(
-      "Empirical coverage probability",
+      "ECP",
       x = 0.020,
       y = 0.53,
       angle = 90,
@@ -2027,7 +2026,7 @@ combine_four_unified_score_ratio_models_shared_axes <- function(
     width = 16,
     height = 12,
     y_limits = NULL,
-    y_axis_label = "Interval score ratio to FARFIMA(1,1,0)") {
+    y_axis_label = "IS ratio to FARFIMA(1,1,0)") {
   combine_four_unified_rmse_ratio_models(
     df = df,
     file_name = file_name,
@@ -2119,7 +2118,7 @@ p_unified_score_ratio_11_95 <-
   ) +
   labs(
     x = "Forecast horizon h",
-    y = "95% interval-score ratio to FARFIMA(1,1,0)",
+    y = "95% IS ratio to FARFIMA(1,1,0)",
     colour = "Order selection",
     linetype = "Order selection",
     shape = "Order selection"
@@ -2282,7 +2281,7 @@ p_unified_wis_ratio_expanding <-
     file_name = "Plots Slides/unified_wis_ratio_expanding_2x2.pdf",
     width = 20,
     height = 15,
-    y_axis_label = "Weighted interval score ratio to FARFIMA(1,1,0)"
+    y_axis_label = "WIS ratio to FARFIMA(1,1,0)"
   )
 
 p_unified_wis_ratio_expanding <-
@@ -2294,7 +2293,7 @@ p_unified_wis_ratio_expanding <-
     ),
     width = 16,
     height = 16,
-    y_axis_label = "Weighted interval score ratio to FARFIMA(1,1,0)"
+    y_axis_label = "WIS ratio to FARFIMA(1,1,0)"
   )
 ```
 

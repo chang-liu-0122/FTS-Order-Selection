@@ -44,13 +44,13 @@ Recommended main-text set:
 
 - fertility rainbow plot;
 - fertility fACF;
-- fertility RMSE/MAE ratios;
+- fertility RMSPE/MAPE ratios;
 - fertility ECP;
 - fertility WIS ratio;
 - fertility ten-horizon forecast illustration;
 - mortality rainbow plot;
 - female/male mortality fACFs;
-- female/male RMSE/MAE ratios;
+- female/male RMSPE/MAPE ratios;
 - female/male ECP;
 - female/male WIS ratios;
 - one female and one male ten-horizon forecast illustration, or a single combined figure if the panels remain readable.
