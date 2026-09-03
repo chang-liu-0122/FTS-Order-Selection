@@ -137,11 +137,10 @@ out_ic <- parallel_repeat_full_forecasting_pipeline_compact_order_method(
 ```
 
 
-```{r unified-simulation-extract, eval=FALSE}
-pipeline_metrics <- extract_required_metrics_from_compact_order_method(
-  out_ic,
-  rmse_ratio_threshold = 2
-)
+```{r}
+# pipeline_metrics <- extract_required_metrics_from_compact_order_method(
+#   out_ic
+# )
 ```
 
 
@@ -188,11 +187,10 @@ combine_forecast_results <- function(res_main, res_add) {
 }
 
 unified_forecast_res <- combine_forecast_results(unified_forecast_res, unified_forecast_res_add)
-rm(unified_forecast_res_add)
-invisible(gc())
-unified_wis <- make_wis_summary(unified_forecast_res)
 
+unified_wis <- make_wis_summary(unified_forecast_res)
 ```
+
 
 
 
