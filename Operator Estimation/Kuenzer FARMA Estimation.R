@@ -47,6 +47,23 @@ farma_estimation <- function(X, p = 1, q = 0, m = NULL, Npc = 1)
   Xe <- eigen(cov(t(Xc)))$vectors
   Npc <- min(Npc, d)
 
+  reduce_score_operators <- function(operator_score_array) {
+    n_lags <- dim(operator_score_array)[3]
+    reduced <- array(NA_real_, dim = c(Npc, Npc, n_lags))
+
+    for (lag_i in seq_len(n_lags)) {
+      score_operator <- matrix(
+        operator_score_array[, , lag_i],
+        nrow = d,
+        ncol = Npc
+      )
+      reduced[, , lag_i] <-
+        crossprod(Xe[, seq_len(Npc), drop = FALSE], score_operator)
+    }
+
+    reduced
+  }
+
   # CASE 1: FAR(p)
   if (q == 0)
   {
@@ -64,6 +81,8 @@ farma_estimation <- function(X, p = 1, q = 0, m = NULL, Npc = 1)
     A_hat <- D %*% solve(G)
 
     dim(A_hat) <- c(d, Npc, p)
+
+    phi_reduced <- reduce_score_operators(A_hat)
 
     A_hat <- apply(A_hat, 3,
                    function(M) M %*% t(Xe[, 1:Npc, drop = FALSE]))
@@ -90,6 +109,8 @@ farma_estimation <- function(X, p = 1, q = 0, m = NULL, Npc = 1)
     return(list(
       phi = A_hat,
       theta = NULL,
+      phi_reduced = phi_reduced,
+      theta_reduced = NULL,
       fitted = fitted,
       fitted_original = fitted_original,
       residuals = resid,
@@ -129,14 +150,19 @@ farma_estimation <- function(X, p = 1, q = 0, m = NULL, Npc = 1)
 
   # reshape and lift back to function space
   dim(opshat) <- c(d, Npc, ncol(opshat) / Npc)
+  opshat_reduced <- reduce_score_operators(opshat)
   opshat <- apply(opshat, 3, "%*%", t(Xe[, 1:Npc, drop=FALSE]))
   dim(opshat) <- c(d, d, p + q)
 
   thetahat <- opshat[, , 1:q, drop=FALSE]
+  thetahat_reduced <- opshat_reduced[, , 1:q, drop = FALSE]
   if (p > 0) {
     phihat <- opshat[, , (q + 1):(q + p), drop=FALSE]
+    phihat_reduced <-
+      opshat_reduced[, , (q + 1):(q + p), drop = FALSE]
   } else {
     phihat <- NULL
+    phihat_reduced <- NULL
   }
 
   # =======================
@@ -178,6 +204,8 @@ farma_estimation <- function(X, p = 1, q = 0, m = NULL, Npc = 1)
   return(list(
     phi = phihat,
     theta = thetahat,
+    phi_reduced = phihat_reduced,
+    theta_reduced = thetahat_reduced,
     fitted = fitted,
     fitted_original = fitted_original,
     residuals = eps_hat,

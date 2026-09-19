@@ -8,8 +8,8 @@ rolling_forecasting_pipeline_compact_order_method <- function(X,
                                                               q_max = 5,
                                                               Npc = 1,
                                                               far_pve = 0.95,
-                                                              zeta_grid = seq(0.1, 10, length.out = 500),
-                                                              m_const = 0.65,
+                                                              zeta_grid = seq(0.1, 50, length.out = 2496),
+                                                              m_const = 0.75,
                                                               R_noise = 0,
                                                               B = 100,
                                                               burn_in = 200,
@@ -23,7 +23,7 @@ rolling_forecasting_pipeline_compact_order_method <- function(X,
   order_selection_method <- match.arg(order_selection_method)
   cv_order_window_type <- match.arg(cv_order_window_type, several.ok = TRUE)
   order_selection_method <- match.arg(order_selection_method)
-  memory_cov_type <- match.arg(memory_cov_type,c("sample", "lrc_RS", "lrc_LRS"))
+  memory_cov_type <- match.arg(memory_cov_type, c("sample", "lrc_RS", "lrc_LRS"))
 
   order_methods <- if (order_selection_method == "both") {
     c("adaptive_ic", "cv")
@@ -195,6 +195,22 @@ rolling_forecasting_pipeline_compact_order_method <- function(X,
     )
 
     d_hat <- as.numeric(d_result$d_BC_LPWN2)
+
+    if (isTRUE(d_result$d_BC_LPWN2_rejected)) {
+      stop(structure(
+        class = c("lpwn_inadmissible_d", "error", "condition"),
+        list(
+          message = sprintf(
+            paste(
+              "Rejected inadmissible BC-LPWN2 estimate:",
+              "unrestricted d = %.6f is below zero."
+            ),
+            d_result$d_BC_LPWN2_unrestricted
+          ),
+          call = NULL
+        )
+      ))
+    }
 
     if (length(d_hat) != 1L || !is.finite(d_hat)) {
       stop("Estimated d is not a single finite value.")
@@ -418,8 +434,8 @@ parallel_repeat_full_forecasting_pipeline_compact_order_method <- function(n_rep
                                                                            Npc = 1,
                                                                            no_grid = 101,
                                                                            far_pve = 0.95,
-                                                                           zeta_grid = seq(0.1, 10, length.out = 500),
-                                                                           m_const = 0.65,
+                                                                           zeta_grid = seq(0.1, 50, length.out = 2496),
+                                                                           m_const = 0.75,
                                                                            R_noise = 0,
                                                                            B = 100,
                                                                            burn_in = 200,
@@ -446,7 +462,6 @@ parallel_repeat_full_forecasting_pipeline_compact_order_method <- function(n_rep
     results <- future.apply::future_lapply(seeds, function(s) {
       estimate_list <- list()
       error_curve_list <- list()
-      calibration_list <- list()
       conformal_summary_list <- list()
       error_list <- list()
 
@@ -459,7 +474,9 @@ parallel_repeat_full_forecasting_pipeline_compact_order_method <- function(n_rep
         p_i <- grid$p[i]
         q_i <- grid$q[i]
 
-        sim_seed <- s * 100000 + i
+        # Keyed on the scenario identity rather than the row position, so a
+        # subset of the grid reproduces the same data as the full grid.
+        sim_seed <- s * 100000 + scenario_i
 
         sim_out <- tryCatch({
           sim <- sim_FARMA(
@@ -583,13 +600,7 @@ parallel_repeat_full_forecasting_pipeline_compact_order_method <- function(n_rep
 
         if (nrow(out$error_detail) > 0) {
           error_curve_list[[length(error_curve_list) + 1]] <-
-            out$error_detail |>
-            dplyr::mutate(!!!metadata, .before = 1)
-        }
-
-        if (nrow(out$calibration_detail) > 0) {
-          calibration_list[[length(calibration_list) + 1]] <-
-            out$calibration_detail |>
+            compact_forecast_errors(out$error_detail) |>
             dplyr::mutate(!!!metadata, .before = 1)
         }
 
@@ -614,7 +625,6 @@ parallel_repeat_full_forecasting_pipeline_compact_order_method <- function(n_rep
       list(
         estimate_detail = dplyr::bind_rows(estimate_list),
         error_detail = dplyr::bind_rows(error_curve_list),
-        calibration_detail = dplyr::bind_rows(calibration_list),
         conformal_summary_detail = dplyr::bind_rows(conformal_summary_list),
         error_log = dplyr::bind_rows(error_list)
       )
@@ -626,8 +636,6 @@ parallel_repeat_full_forecasting_pipeline_compact_order_method <- function(n_rep
         z$estimate_detail)),
       error_detail = dplyr::bind_rows(lapply(results, function(z)
         z$error_detail)),
-      calibration_detail = dplyr::bind_rows(lapply(results, function(z)
-        z$calibration_detail)),
       conformal_summary_detail = dplyr::bind_rows(lapply(results, function(z)
         z$conformal_summary_detail)),
       error_log = dplyr::bind_rows(lapply(results, function(z)
@@ -649,8 +657,8 @@ rolling_forecasting_pipeline_empirical <- function(X,
                                                    q_max = 5,
                                                    Npc = 1,
                                                    far_pve = 0.95,
-                                                   zeta_grid = seq(0.1, 10, length.out = 500),
-                                                   m_const = 0.65,
+                                                   zeta_grid = seq(0.1, 50, length.out = 2496),
+                                                   m_const = 0.75,
                                                    R_noise = 0,
                                                    B = 100,
                                                    burn_in = 200,
@@ -717,14 +725,26 @@ rolling_forecasting_pipeline_empirical <- function(X,
 
   set.seed(seed)
 
-  d_hat <-
+  d_result <-
     estimate_d_BC_LPWN2(
       X_initial_train_centered,
       m_const = m_const,
       R_noise = R_noise,
       B = B,
       burn_in = burn_in
-    )$d_BC_LPWN2
+    )
+
+  if (isTRUE(d_result$d_BC_LPWN2_rejected)) {
+    stop(sprintf(
+      paste(
+        "Rejected inadmissible BC-LPWN2 estimate:",
+        "unrestricted d = %.6f is below zero."
+      ),
+      d_result$d_BC_LPWN2_unrestricted
+    ))
+  }
+
+  d_hat <- d_result$d_BC_LPWN2
 
   d_hat <- as.numeric(d_hat)
 
@@ -1480,7 +1500,7 @@ rolling_forecasting_pipeline_empirical <- function(X,
 #                                                    q_max = 5,
 #                                                    Npc = 1,
 #                                                    far_pve = 0.95,
-#                                                    zeta_grid = seq(0.1, 10, length.out = 500),
+#                                                    zeta_grid = seq(0.1, 50, length.out = 2496),
 #                                                    m_const = 0.65,
 #                                                    R_noise = 0,
 #                                                    B = 100,

@@ -420,6 +420,7 @@ for (country in names(fertility_data)) {
       q_max = 5,
       Npc = 1,
       B = 399,
+      m_const = 0.65,
       far_pve = 0.95,
       fracdiff_trim = 20,
       seed = 123,
@@ -810,8 +811,8 @@ fertility_interval_score_ratio_plot <- ggplot(
     Ratio,
     colour = Method,
     shape = Method,
-    linetype = `Nominal coverage`,
-    group = interaction(Method, `Nominal coverage`)
+    linetype = Method,
+    group = Method
   )
 ) +
   geom_hline(
@@ -822,24 +823,27 @@ fertility_interval_score_ratio_plot <- ggplot(
   ) +
   geom_line(linewidth = 0.9) +
   geom_point(size = 2.5) +
+  facet_grid(. ~ `Nominal coverage`) +
   scale_colour_manual(
     name = "Forecasting method",
     values = method_palette,
-    breaks = c("Functional IC", "CV")
+    breaks = c("Functional IC", "CV"),
+    labels = method_plot_labels[c("Functional IC", "CV")],
+    drop = FALSE
   ) +
   scale_shape_manual(
     name = "Forecasting method",
     values = method_shapes,
-    breaks = c("Functional IC", "CV")
+    breaks = c("Functional IC", "CV"),
+    labels = method_plot_labels[c("Functional IC", "CV")],
+    drop = FALSE
   ) +
   scale_linetype_manual(
-    name = "Nominal coverage",
-    values = c("80%" = "dashed", "95%" = "dotted")
-  ) +
-  guides(
-    colour = guide_legend(order = 1, nrow = 1, byrow = TRUE),
-    shape = "none",
-    linetype = guide_legend(order = 2, nrow = 1, byrow = TRUE)
+    name = "Forecasting method",
+    values = method_linetypes,
+    breaks = c("Functional IC", "CV"),
+    labels = method_plot_labels[c("Functional IC", "CV")],
+    drop = FALSE
   ) +
   scale_x_continuous(breaks = 1:10) +
   labs(
@@ -848,10 +852,7 @@ fertility_interval_score_ratio_plot <- ggplot(
   ) +
   theme(
     legend.position = "top",
-    legend.box = "vertical",
-    legend.direction = "horizontal",
-    legend.box.just = "center",
-    legend.justification = "center"
+    legend.box = "horizontal"
   )
 
 fertility_weighted_interval_score_ratio_data <- wis_ratios |>
@@ -1582,6 +1583,7 @@ for (sex in names(mortality_series)) {
       q_max = 5,
       Npc = 1,
       B = 399,
+      m_const = 0.65,
       far_pve = 0.95,
       fracdiff_trim = 20,
       seed = 123,
@@ -1859,8 +1861,8 @@ mortality_interval_score_ratio_plot <- ggplot(
     Ratio,
     colour = Method,
     shape = Method,
-    linetype = `Nominal coverage`,
-    group = interaction(Method, `Nominal coverage`)
+    linetype = Method,
+    group = Method
   )
 ) +
   geom_hline(
@@ -1871,25 +1873,27 @@ mortality_interval_score_ratio_plot <- ggplot(
   ) +
   geom_line(linewidth = 0.9) +
   geom_point(size = 2.5) +
-  facet_wrap(~ Sex, nrow = 1) +
+  facet_grid(Sex ~ `Nominal coverage`) +
   scale_colour_manual(
     name = "Forecasting method",
     values = method_palette,
-    breaks = c("Functional IC", "CV")
+    breaks = c("Functional IC", "CV"),
+    labels = method_plot_labels[c("Functional IC", "CV")],
+    drop = FALSE
   ) +
   scale_shape_manual(
     name = "Forecasting method",
     values = method_shapes,
-    breaks = c("Functional IC", "CV")
+    breaks = c("Functional IC", "CV"),
+    labels = method_plot_labels[c("Functional IC", "CV")],
+    drop = FALSE
   ) +
   scale_linetype_manual(
-    name = "Nominal coverage",
-    values = c("80%" = "dashed", "95%" = "dotted")
-  ) +
-  guides(
-    colour = guide_legend(order = 1, nrow = 1, byrow = TRUE),
-    shape = "none",
-    linetype = guide_legend(order = 2, nrow = 1, byrow = TRUE)
+    name = "Forecasting method",
+    values = method_linetypes,
+    breaks = c("Functional IC", "CV"),
+    labels = method_plot_labels[c("Functional IC", "CV")],
+    drop = FALSE
   ) +
   scale_x_continuous(breaks = 1:10) +
   labs(
@@ -1898,10 +1902,7 @@ mortality_interval_score_ratio_plot <- ggplot(
   ) +
   theme(
     legend.position = "top",
-    legend.box = "vertical",
-    legend.direction = "horizontal",
-    legend.box.just = "center",
-    legend.justification = "center"
+    legend.box = "horizontal"
   )
 
 mortality_weighted_interval_score_ratio_data <- mortality_wis_ratios |>

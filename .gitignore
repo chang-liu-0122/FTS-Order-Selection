@@ -17,3 +17,6 @@
 # Raw file exceeds GitHub's 100 MB per-file limit.
 # Keep the local copy; document or distribute it separately (or use Git LFS).
 Empirical Study/data/opsd_time_series_60min_2020.csv
+
+# Timestamped simulation output from Forecasting/run_unified_simulation.R
+Forecasting/sim_results/

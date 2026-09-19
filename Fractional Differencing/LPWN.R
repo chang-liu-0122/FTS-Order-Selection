@@ -143,7 +143,7 @@ LPWN<-function(data, m, R_short=0, R_noise=0){
 
 LPWN_general <- function(
     data,
-    m_const = 0.65,
+    m_const = 0.75,
     R_short = 1,
     R_noise = 0,
     tuning_const = 1
@@ -188,7 +188,6 @@ LPWN_general <- function(
 
   return(d_final)
 }
-
 
 
 

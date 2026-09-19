@@ -25,7 +25,6 @@ library(MASS)
 library(fdaACF)
 library(longmemo)
 library(fracdiff)
-library(freqdom.fda)
 library(beepr)
 library(future)
 library(future.apply)
@@ -71,8 +70,8 @@ dir.create(unified_plot_dir, recursive = TRUE, showWarnings = FALSE)
 
 ```{r unified-simulation, eval=FALSE}
 grid_pipeline <- data.frame(
-  T = 1000,
-  d = 0.6,
+  T = 500,
+  d = 1,
   p = 1L,
   q = 0L,
   ar_strength = 0.5,
@@ -81,7 +80,7 @@ grid_pipeline <- data.frame(
 
 grid_pipeline <- expand.grid(
   T = c(500, 1000),
-  d = c(0.4, 0.8, 1.2),
+  d = c(0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4),
   ar_strength = c(0.2, 0.5, 0.8),
   ma_strength = c(0.2, 0.5, 0.8),
   model = c("1_0", "0_1", "1_1", "2_0")
@@ -126,8 +125,9 @@ progressr::handlers("progress")
 # )
 
 out_ic <- parallel_repeat_full_forecasting_pipeline_compact_order_method(
-  n_rep = 20,
+  n_rep = 10,
   grid = grid_pipeline,
+  m_const = 0.75,
   fracdiff_trim = 200,
   far_benchmark_d = 1,
   window_types = c("expanding", "fixed"),
@@ -137,10 +137,12 @@ out_ic <- parallel_repeat_full_forecasting_pipeline_compact_order_method(
 ```
 
 
-```{r}
-# pipeline_metrics <- extract_required_metrics_from_compact_order_method(
-#   out_ic
-# )
+```{r unified-postprocess, eval=FALSE}
+pipeline_metrics <- extract_required_metrics_from_compact_order_method(
+  out_ic,
+  summary_stat = "both",
+  keep_replication_details = TRUE
+)
 ```
 
 
@@ -148,47 +150,22 @@ out_ic <- parallel_repeat_full_forecasting_pipeline_compact_order_method(
 
 ```{r}
 future::plan(future::sequential)
-unified_forecast_res = readRDS("pipeline_forecast_summary.rds")
-unified_forecast_res_add = readRDS("pipeline_forecast_summary_additional.rds")
+unified_summary_file <- file.path(
+  project_root,
+  "Forecasting",
+  "unified_summary.rds"
+)
+unified_forecast_res <- readRDS(unified_summary_file)
 
-append_one_component <- function(df_main, df_add) {
-  if (is.null(df_main))
-    return(df_add)
-  if (is.null(df_add))
-    return(df_main)
-  
-  if (!is.data.frame(df_main) || !is.data.frame(df_add)) {
-    stop("Both objects must be data frames / tibbles.")
-  }
-  
-  df_add_new <- df_add
-  
-  if ("scenario_id" %in% names(df_main) &&
-      "scenario_id" %in% names(df_add)) {
-    max_id <- max(df_main$scenario_id, na.rm = TRUE)
-    df_add_new <- df_add_new %>%
-      mutate(scenario_id = scenario_id + max_id)
-  }
-  
-  bind_rows(df_main, df_add_new)
-}
+required_summaries <- c(
+  "d_summary", "order_accuracy", "ratio_summary",
+  "interval_summary", "wis_summary"
+)
+stopifnot(all(required_summaries %in% names(unified_forecast_res)))
 
-combine_forecast_results <- function(res_main, res_add) {
-  all_names <- union(names(res_main), names(res_add))
-  
-  out <- vector("list", length(all_names))
-  names(out) <- all_names
-  
-  for (nm in all_names) {
-    out[[nm]] <- append_one_component(df_main = res_main[[nm]], df_add  = res_add[[nm]])
-  }
-  
-  out
-}
-
-unified_forecast_res <- combine_forecast_results(unified_forecast_res, unified_forecast_res_add)
-
-unified_wis <- make_wis_summary(unified_forecast_res)
+# Unsuffixed metrics are Monte Carlo means. Columns ending in `_median`
+# are retained in the saved object but are not used in the figures below.
+unified_wis <- unified_forecast_res$wis_summary
 ```
 
 
@@ -2648,8 +2625,3 @@ cat(wis_latex_table)
 cat("\\endgroup\n")
 ```
 
-
-
-```{r}
-unified_forecast_res$ratio_by_rep_clean %>% filter(window_type == "expanding", p_true == 2, q_true == 0, ar_strength == 0.8, d_true == 0.4, order_selection_method == "adaptive_ic", n == 500, h == 1, RMSE_ratio < 1.5) %>% pull(RMSE_ratio) %>% mean()
-```

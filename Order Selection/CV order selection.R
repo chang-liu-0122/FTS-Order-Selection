@@ -6,7 +6,7 @@ select_order_cv_forecast_full <- function(
     p_max = 5,
     q_max = 5,
     Npc = 1,
-    m_const = 0.65,
+    m_const = 0.75,
     R_noise = 0,
     B = 100,
     burn_in = 200,
@@ -59,7 +59,7 @@ select_order_cv_forecast_full <- function(
 
   set.seed(seed)
 
-  d_hat <- estimate_d_BC_LPWN2(
+  d_result <- estimate_d_BC_LPWN2(
     X_initial_train_centered,
     m_const = m_const,
     R_noise = R_noise,
@@ -67,7 +67,19 @@ select_order_cv_forecast_full <- function(
     burn_in = burn_in,
     memory_cov_type = memory_cov_type,
     memory_cov_band_const = memory_cov_band_const
-  )$d_BC_LPWN2
+  )
+
+  if (isTRUE(d_result$d_BC_LPWN2_rejected)) {
+    stop(sprintf(
+      paste(
+        "Rejected inadmissible BC-LPWN2 estimate:",
+        "unrestricted d = %.6f is below zero."
+      ),
+      d_result$d_BC_LPWN2_unrestricted
+    ))
+  }
+
+  d_hat <- d_result$d_BC_LPWN2
 
   d_hat <- as.numeric(d_hat)
 
@@ -357,13 +369,16 @@ select_order_cv_forecast_full <- function(
       selection_score = mean(RMSE, na.rm = TRUE),
       mean_MAE = mean(MAE, na.rm = TRUE),
       n_valid_horizons = sum(is.finite(RMSE)),
+      min_n_origin = min(n_origin, na.rm = TRUE),
       min_RMSE = min(RMSE, na.rm = TRUE),
       max_RMSE = max(RMSE, na.rm = TRUE),
       .groups = "drop"
     ) |>
     dplyr::mutate(
+      n_origin_expected = length(valid_steps),
       selection_score = dplyr::if_else(
-        n_valid_horizons == h_max,
+        n_valid_horizons == h_max &
+          min_n_origin == n_origin_expected,
         selection_score,
         Inf
       )
@@ -384,6 +399,16 @@ select_order_cv_forecast_full <- function(
         is.na(n_valid_horizons),
         0L,
         as.integer(n_valid_horizons)
+      ),
+      min_n_origin = dplyr::if_else(
+        is.na(min_n_origin),
+        0L,
+        as.integer(min_n_origin)
+      ),
+      n_origin_expected = dplyr::if_else(
+        is.na(n_origin_expected),
+        length(valid_steps),
+        as.integer(n_origin_expected)
       )
     ) |>
     dplyr::arrange(selection_score, p + q, p, q)

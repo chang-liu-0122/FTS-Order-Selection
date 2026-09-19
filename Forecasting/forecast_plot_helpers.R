@@ -261,7 +261,12 @@ make_custom_method_legend <- function(methods,
       colour = ggplot2::guide_legend(
         nrow = 1,
         byrow = TRUE,
-        override.aes = list(linewidth = line_width, size = point_size)
+        override.aes = list(
+          linewidth = line_width,
+          size = point_size,
+          shape = unname(shapes[methods]),
+          linetype = unname(linetypes[methods])
+        )
       ),
       linetype = "none",
       shape = "none"

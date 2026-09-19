@@ -1,7 +1,7 @@
 compute_bias_LPWN_multi <- function(
     X,
     d_current,
-    m_const = 0.65,
+    m_const = 0.75,
     R_short_vec = c(1, 2),
     R_noise = 0,
     B = 100,
@@ -66,7 +66,7 @@ compute_bias_LPWN_multi <- function(
 
 estimate_d_BC_LPWN2 <- function(
     X,
-    m_const = 0.65,
+    m_const = 0.75,
     R_noise = 0,
     B = 100,
     burn_in = 200,
@@ -106,11 +106,25 @@ estimate_d_BC_LPWN2 <- function(
     memory_cov_band_const = memory_cov_band_const
   )
 
-  d_BC_LPWN2 <- d_LPWN2 - out$bias[1]
+  d_BC_LPWN2_unrestricted <- d_LPWN2 - out$bias[1]
+
+  # The bias correction is not box constrained. Reject estimates below zero,
+  # which fall outside the admissible range of the LPWN construction, while
+  # retaining the unrestricted value for seed-level diagnostics.
+  d_BC_LPWN2_rejected <-
+    !is.finite(d_BC_LPWN2_unrestricted) || d_BC_LPWN2_unrestricted < 0
+
+  d_BC_LPWN2 <- if (d_BC_LPWN2_rejected) {
+    NA_real_
+  } else {
+    as.numeric(d_BC_LPWN2_unrestricted)
+  }
 
   list(
     d_LPWN2 = d_LPWN2,
     d_BC_LPWN2 = d_BC_LPWN2,
+    d_BC_LPWN2_unrestricted = as.numeric(d_BC_LPWN2_unrestricted),
+    d_BC_LPWN2_rejected = d_BC_LPWN2_rejected,
     bias_LPWN2 = out$bias[1],
     sd_LPWN2 = out$sd[1],
     bootstrap_estimates = out$boot[, 1],
@@ -126,7 +140,7 @@ estimate_d_BC_LPWN2 <- function(
 
 estimate_d_LPWN_hybrid <- function(
      X,
-     m_const = 0.65,
+     m_const = 0.75,
      R_noise = 0,
      B = 100,
      burn_in = 200
@@ -321,7 +335,6 @@ parallel_sim_LPWN_FARMA <- function(n_rep = 100) {
     do.call(rbind, results)
   })
 }
-
 
 
 

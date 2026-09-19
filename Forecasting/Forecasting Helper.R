@@ -77,6 +77,10 @@ weighted_interval_score_vec <- function(y,
 # This avoids rerunning the forecasting simulations when the alpha levels are
 # unchanged and only an averaged WIS is required for plots or tables.
 make_wis_summary <- function(result) {
+  if (!is.null(result$wis_summary)) {
+    return(result$wis_summary)
+  }
+
   required_result_components <- c("ratio_summary", "interval_summary")
 
   if (!all(required_result_components %in% names(result))) {
@@ -282,6 +286,140 @@ frac_integrate_forecast_with_history <- function(Y_history, Y_future, d_hat)
 }
 
 
+farma_companion_radius <- function(operator_array, leading_sign = 1)
+{
+  if (is.null(operator_array)) {
+    return(NA_real_)
+  }
+
+  operator_array <- as.array(operator_array)
+  operator_dim <- dim(operator_array)
+
+  if (length(operator_dim) != 3L || operator_dim[1] != operator_dim[2]) {
+    stop("FARMA operators must be a square matrix array.")
+  }
+
+  if (any(!is.finite(operator_array))) {
+    return(Inf)
+  }
+
+  state_dim <- operator_dim[1]
+  n_lags <- operator_dim[3]
+  companion <- matrix(0, nrow = state_dim * n_lags,
+                      ncol = state_dim * n_lags)
+
+  first_row <- do.call(
+    cbind,
+    lapply(seq_len(n_lags), function(lag_i) {
+      leading_sign * operator_array[, , lag_i]
+    })
+  )
+  companion[seq_len(state_dim), ] <- first_row
+
+  if (n_lags > 1L) {
+    lower_rows <- state_dim + seq_len(state_dim * (n_lags - 1L))
+    previous_states <- seq_len(state_dim * (n_lags - 1L))
+    companion[lower_rows, previous_states] <-
+      diag(state_dim * (n_lags - 1L))
+  }
+
+  max(Mod(eigen(companion, only.values = TRUE)$values))
+}
+
+
+farma_fit_diagnostics <- function(fit, Y_train)
+{
+  phi_for_check <- if (!is.null(fit$phi_reduced)) {
+    fit$phi_reduced
+  } else {
+    fit$phi
+  }
+
+  theta_for_check <- if (!is.null(fit$theta_reduced)) {
+    fit$theta_reduced
+  } else {
+    fit$theta
+  }
+
+  residual_values <- as.numeric(fit$residuals)
+  residual_values <- residual_values[is.finite(residual_values)]
+  training_sd <- sd(as.numeric(Y_train), na.rm = TRUE)
+
+  residual_ratio <- if (length(residual_values) == 0L ||
+                        !is.finite(training_sd) || training_sd <= 0) {
+    Inf
+  } else {
+    max(abs(residual_values)) / training_sd
+  }
+
+  list(
+    ar_radius = farma_companion_radius(phi_for_check, leading_sign = 1),
+    ma_radius = farma_companion_radius(theta_for_check, leading_sign = -1),
+    residual_ratio = residual_ratio
+  )
+}
+
+
+validate_farma_fit <- function(fit,
+                               Y_train,
+                               ar_radius_limit = 1,
+                               ma_radius_limit = 1,
+                               residual_ratio_limit = 10)
+{
+  diagnostics <- farma_fit_diagnostics(fit = fit, Y_train = Y_train)
+  rejection_reasons <- character(0)
+
+  if (!is.null(fit$phi) &&
+      (!is.finite(diagnostics$ar_radius) ||
+       diagnostics$ar_radius >= ar_radius_limit)) {
+    rejection_reasons <- c(
+      rejection_reasons,
+      sprintf("AR companion radius %.4f >= %.4f",
+              diagnostics$ar_radius, ar_radius_limit)
+    )
+  }
+
+  if (!is.null(fit$theta) &&
+      (!is.finite(diagnostics$ma_radius) ||
+       diagnostics$ma_radius >= ma_radius_limit)) {
+    rejection_reasons <- c(
+      rejection_reasons,
+      sprintf("MA companion radius %.4f >= %.4f",
+              diagnostics$ma_radius, ma_radius_limit)
+    )
+  }
+
+  if (!is.finite(diagnostics$residual_ratio) ||
+      diagnostics$residual_ratio > residual_ratio_limit) {
+    rejection_reasons <- c(
+      rejection_reasons,
+      sprintf("maximum residual ratio %.4f > %.4f",
+              diagnostics$residual_ratio, residual_ratio_limit)
+    )
+  }
+
+  if (length(rejection_reasons) > 0L) {
+    # Signalled with a dedicated condition class so that the rolling
+    # forecast routine can distinguish an unstable operator fit from an
+    # ordinary per-origin failure. An unstable fit invalidates the whole
+    # replication, not just the current forecast origin, so this condition
+    # is re-raised rather than logged and skipped.
+    stop(
+      structure(
+        class = c("farma_unstable_fit", "error", "condition"),
+        list(
+          message = paste("Rejected unstable FARMA fit:",
+                          paste(rejection_reasons, collapse = "; ")),
+          call = NULL
+        )
+      )
+    )
+  }
+
+  invisible(diagnostics)
+}
+
+
 
 forecast_original_scale <- function(Y_train,
                                     d_hat,
@@ -292,7 +430,10 @@ forecast_original_scale <- function(Y_train,
                                     Npc = 1,
                                     far_pve = 0.95,
                                     Y_history_for_integration = NULL,
-                                    return_fit = FALSE)
+                                    return_fit = FALSE,
+                                    farma_ar_radius_limit = 1,
+                                    farma_ma_radius_limit = 1,
+                                    farma_residual_ratio_limit = 10)
 {
   method <- match.arg(method)
 
@@ -316,6 +457,14 @@ forecast_original_scale <- function(Y_train,
       Npc = Npc
     )
 
+    fit_diagnostics <- validate_farma_fit(
+      fit = fit_farma,
+      Y_train = Y_train,
+      ar_radius_limit = farma_ar_radius_limit,
+      ma_radius_limit = farma_ma_radius_limit,
+      residual_ratio_limit = farma_residual_ratio_limit
+    )
+
     Y_future_farma <- forecast_farma_path(fit = fit_farma,
                                           Y_train = Y_train,
                                           h = h)
@@ -328,6 +477,7 @@ forecast_original_scale <- function(Y_train,
 
     if (return_fit) {
       out$farma$fit <- fit_farma
+      out$farma$diagnostics <- fit_diagnostics
     }
   }
 
@@ -358,9 +508,14 @@ forecast_original_scale <- function(Y_train,
 
 
 
+# The grid runs to 50 rather than 10. At long horizons the validation sample is
+# small, and gamma (the sd across validation origins) can be much smaller than
+# the errors it has to cover, so the required zeta is occasionally well above
+# 10. Capping at 10 left cand empty and returned zeta = NA, which silently
+# dropped that horizon at test time. The step stays at 0.02.
 calibrate_zeta_ecp <- function(E_valid,
                                alpha,
-                               zeta_grid = seq(0.1, 10, length.out = 500))
+                               zeta_grid = seq(0.1, 50, length.out = 2496))
 {
   E_valid <- as.matrix(E_valid)
 
