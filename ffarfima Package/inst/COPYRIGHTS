@@ -1,0 +1,16 @@
+ffarfima includes code adapted from the following sources.
+
+R/lw.R, R/lpwn.R
+  Local Whittle and local polynomial Whittle with noise estimators from the
+  LongMemoryTSA package by Christian Leschinski (archived on CRAN).
+
+R/dfa.R
+  pengFit() is adapted from the fArma package by Diethelm Wuertz (GPL >= 2),
+  a reimplementation of Taqqu, Teverovsky and Willinger (1995).
+
+R/farma.R
+  farma_estimation() is adapted from the FARMA estimation code of Thomas Kuenzer
+  (version 2024-12-17).
+
+R/sieve_bootstrap.R
+  Functional sieve bootstrap; original author to be confirmed.

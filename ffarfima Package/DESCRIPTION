@@ -1,0 +1,45 @@
+Package: ffarfima
+Type: Package
+Title: Memory Estimation, Order Selection and Forecasting for Functional ARFIMA Models
+Version: 0.0.0.9000
+Authors@R: c(
+    person("Chang", "Liu", email = "cliu9549@sydney.edu.au", role = c("aut", "cre")),
+    person("Thomas", "Kuenzer", role = c("ctb", "cph"), comment = "FARMA operator estimator"),
+    person("Christian", "Leschinski", role = c("ctb", "cph"), comment = "local Whittle and LPWN code from LongMemoryTSA"),
+    person("Diethelm", "Wuertz", role = c("ctb", "cph"), comment = "Peng (DFA) estimator from fArma")
+    )
+Description: Tools for long-memory functional time series modelled as functional
+    ARFIMA (FARFIMA) processes. The memory parameter is estimated from the leading
+    functional principal component score with detrended fluctuation analysis, local
+    Whittle, local polynomial Whittle with noise (LPWN) or sieve-bootstrap
+    bias-corrected LPWN. Short-memory orders are selected by an adaptive functional
+    Hannan-Quinn criterion (exhaustive or automatic search), forecast-based
+    cross-validation, or a functional Box-Jenkins procedure. Point forecasts are
+    accompanied by scaled-residual, split-conformal and adaptive conformal
+    prediction bands, with interval and weighted interval scores for evaluation.
+License: GPL (>= 3)
+Encoding: UTF-8
+Depends: R (>= 4.1.0)
+Imports:
+    FCVAR,
+    far,
+    ftsa,
+    longmemo,
+    rainbow,
+    sde,
+    stats,
+    utils,
+    graphics,
+    grDevices,
+    vars,
+    withr,
+    wwntests
+Suggests:
+    demography,
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
