@@ -1,5 +1,5 @@
 ---
-title: "unified forecasting comparison"
+title: "unified analysis"
 author: "Chang Liu 510408792"
 date: "2026-08-09"
 output: html_document
@@ -40,7 +40,7 @@ library(kableExtra)
 
 
 ```{r}
-project_root <- if (file.exists("Forecasting/unified forecast comparisons.Rmd")) {
+project_root <- if (file.exists("Forecasting/unified_analysis.Rmd")) {
   normalizePath(".")
 } else {
   normalizePath("..")
@@ -55,9 +55,9 @@ source("Fractional Differencing/LPWN.R")
 source("Fractional Differencing/sieve_bootstrap.R")
 source("Fractional Differencing/Sieve-bootstrapped corrected LW estimation.R")
 source("Operator Estimation/Kuenzer FARMA Estimation.R")
-source("Forecasting/Forecasting Helper.R")
-source("Forecasting/forecast_compare_sim.R")
-source("Forecasting/unified_compare_sim.R")
+source("Forecasting/forecast_helpers.R")
+source("Forecasting/ideal_pipeline.R")
+source("Forecasting/unified_pipeline.R")
 source("Forecasting/forecast_plot_helpers.R")
 
 unified_plot_dir <- file.path(project_root, "Forecasting", "Sim Plots Unified")
@@ -69,15 +69,6 @@ dir.create(unified_plot_dir, recursive = TRUE, showWarnings = FALSE)
 
 
 ```{r unified-simulation, eval=FALSE}
-grid_pipeline <- data.frame(
-  T = 500,
-  d = 1,
-  p = 1L,
-  q = 0L,
-  ar_strength = 0.5,
-  ma_strength = 0.5
-)
-
 grid_pipeline <- expand.grid(
   T = c(500, 1000),
   d = c(0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4),
@@ -105,44 +96,32 @@ grid_pipeline <- expand.grid(
   dplyr::select(T, d, p, q, ar_strength, ma_strength) %>%
   dplyr::arrange(T, d, p, q, ar_strength, ma_strength)
 
-
-future::plan(
-  future::multisession,
-  workers = 10
-)
-
+future::plan(future::multisession, workers = 100)
 progressr::handlers("progress")
 
-
-# out_ic <- parallel_repeat_full_forecasting_pipeline_compact_order_method(
-#   n_rep = 10,
-#   grid = grid_pipeline,
-#   order_selection_method = "both",
-#   fracdiff_trim = 200,
-#   far_benchmark_d = 1,
-#   window_types = c("expanding", "fixed"),
-#   cv_order_window_type = c("expanding")
-# )
-
-out_ic <- parallel_repeat_full_forecasting_pipeline_compact_order_method(
-  n_rep = 10,
+out_ic <- simulate_unified(
+  n_rep = 100,
   grid = grid_pipeline,
   m_const = 0.75,
   fracdiff_trim = 200,
   far_benchmark_d = 1,
   window_types = c("expanding", "fixed"),
-  order_selection_method = c("adaptive_ic"),
+  order_selection_method = c("both"),
   cv_order_window_type = c("expanding")
 )
+
+saveRDS(out_ic, file.path(project_root, "Forecasting", "unified_raw.rds"))
 ```
 
 
 ```{r unified-postprocess, eval=FALSE}
-pipeline_metrics <- extract_required_metrics_from_compact_order_method(
+pipeline_metrics <- summarise_metrics(
   out_ic,
   summary_stat = "both",
   keep_replication_details = TRUE
 )
+
+saveRDS(pipeline_metrics, file.path(project_root, "Forecasting", "unified_summary.rds"))
 ```
 
 
@@ -163,8 +142,6 @@ required_summaries <- c(
 )
 stopifnot(all(required_summaries %in% names(unified_forecast_res)))
 
-# Unsuffixed metrics are Monte Carlo means. Columns ending in `_median`
-# are retained in the saved object but are not used in the figures below.
 unified_wis <- unified_forecast_res$wis_summary
 ```
 
@@ -1129,188 +1106,46 @@ ggsave(
 #### Table of RMSPE and MAPE
 
 ```{r}
-benchmark_res <- unified_forecast_res$ratio_summary %>%
-  filter(n == 1000,
-         window_type == "expanding",
-         h %in% c(1, 5, 10),
-         d_true %in% c(0.2, 0.6, 1, 1.4)) %>%
-  select(p_true,
-         q_true,
-         d_true,
-         ar_strength,
-         ma_strength,
-         h,
-         RMSE_far,
-         MAE_far) %>%
-  distinct() %>%
-  group_by(p_true, q_true, d_true, h) %>%
-  summarise(
-    RMSE = mean(RMSE_far, na.rm = TRUE),
-    MAE = mean(MAE_far, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  mutate(Method = "Benchmark")
+unified_ratio_show <- unified_forecast_res$ratio_summary %>%
+  filter(n == 1000, window_type == "expanding", h %in% c(1, 5, 10), d_true %in% c(0.2, 0.6, 1, 1.4))
 
-plugin_res <- unified_forecast_res$ratio_summary %>%
-  filter(n == 1000,
-         window_type == "expanding",
-         h %in% c(1, 5, 10),
-         d_true %in% c(0.2, 0.6, 1, 1.4)) %>%
-  mutate(
-    Method = case_when(
-      order_selection_method == "adaptive_ic" ~ "IC",
-      grepl("^cv", order_selection_method) ~ "CV",
-      TRUE ~ NA_character_
+unified_point_wide <- bind_rows(
+  unified_ratio_show %>%
+    select(p_true, q_true, d_true, ar_strength, ma_strength, h, RMSE_far, MAE_far) %>%
+    distinct() %>%
+    group_by(p_true, q_true, d_true, h) %>%
+    summarise(RMSE = mean(RMSE_far), MAE = mean(MAE_far), .groups = "drop") %>%
+    mutate(M = "B"),
+  unified_ratio_show %>%
+    mutate(M = ifelse(order_selection_method == "adaptive_ic", "IC", "CV")) %>%
+    group_by(p_true, q_true, d_true, h, M) %>%
+    summarise(RMSE = mean(RMSE_farma), MAE = mean(MAE_farma), .groups = "drop")
+) %>%
+  pivot_wider(names_from = c(M, h), values_from = c(RMSE, MAE), names_sep = "_") %>%
+  tab_unified_keys()
+
+unified_point_latex <- tab_longtable(
+  "cc*{9}{r}",
+  paste0(
+    "Raw RMSPE and MAPE in the unified setting with $T=1000$ under the expanding-window scheme, averaged over the dependence strengths. ",
+    "The final rows of each panel report the mean and median over the settings shown. ",
+    "The smallest RMSPE within each setting and horizon is highlighted in red, and the smallest MAPE in blue."
+  ),
+  "tab:unified_forecast_expanding",
+  tab_horizon_header(c("$(p,q)$", "$d$"), c("Bench.", "IC", "CV")),
+  tab_wide_panels(
+    unified_point_wide,
+    c("B", "IC", "CV"),
+    list(
+      list(metric = "RMSE", col = "red", label = "RMSPE"),
+      list(metric = "MAE", col = "blue", label = "MAPE")
     )
-  ) %>%
-  filter(!is.na(Method)) %>%
-  group_by(p_true, q_true, d_true, h, Method) %>%
-  summarise(
-    RMSE = mean(RMSE_farma, na.rm = TRUE),
-    MAE = mean(MAE_farma, na.rm = TRUE),
-    .groups = "drop"
-  )
+  ),
+  tabcolsep = "5pt"
+)
 
-unified_metrics_long <- bind_rows(benchmark_res, plugin_res)
-
-unified_table <- unified_metrics_long %>%
-  mutate(Method = factor(Method, levels = c("Benchmark", "IC", "CV"))) %>%
-  pivot_wider(names_from = Method, values_from = c(RMSE, MAE)) %>%
-  arrange(p_true, q_true, d_true, h) %>%
-  mutate(Model = paste0("$(", p_true, ",", q_true, ")$"))
-
-unified_table <- unified_table %>%
-  rowwise() %>%
-  mutate(
-    min_RMSE = min(c(RMSE_Benchmark, RMSE_IC, RMSE_CV), na.rm = TRUE),
-    min_MAE = min(c(MAE_Benchmark, MAE_IC, MAE_CV), na.rm = TRUE),
-    
-    RMSE_Benchmark_print = ifelse(
-      isTRUE(all.equal(RMSE_Benchmark, min_RMSE)),
-      paste0(
-        "\\textcolor{red}{\\textbf{",
-        sprintf("%.4f", RMSE_Benchmark),
-        "}}"
-      ),
-      sprintf("%.4f", RMSE_Benchmark)
-    ),
-    
-    RMSE_IC_print = ifelse(
-      isTRUE(all.equal(RMSE_IC, min_RMSE)),
-      paste0("\\textcolor{red}{\\textbf{", sprintf("%.4f", RMSE_IC), "}}"),
-      sprintf("%.4f", RMSE_IC)
-    ),
-    
-    RMSE_CV_print = ifelse(
-      isTRUE(all.equal(RMSE_CV, min_RMSE)),
-      paste0("\\textcolor{red}{\\textbf{", sprintf("%.4f", RMSE_CV), "}}"),
-      sprintf("%.4f", RMSE_CV)
-    ),
-    
-    MAE_Benchmark_print = ifelse(
-      isTRUE(all.equal(MAE_Benchmark, min_MAE)),
-      paste0(
-        "\\textcolor{blue}{\\textbf{",
-        sprintf("%.4f", MAE_Benchmark),
-        "}}"
-      ),
-      sprintf("%.4f", MAE_Benchmark)
-    ),
-    
-    MAE_IC_print = ifelse(
-      isTRUE(all.equal(MAE_IC, min_MAE)),
-      paste0("\\textcolor{blue}{\\textbf{", sprintf("%.4f", MAE_IC), "}}"),
-      sprintf("%.4f", MAE_IC)
-    ),
-    
-    MAE_CV_print = ifelse(
-      isTRUE(all.equal(MAE_CV, min_MAE)),
-      paste0("\\textcolor{blue}{\\textbf{", sprintf("%.4f", MAE_CV), "}}"),
-      sprintf("%.4f", MAE_CV)
-    )
-  ) %>%
-  ungroup()
-
-d_groups <- unified_table %>%
-  mutate(row_id = row_number()) %>%
-  group_by(Model, d_true) %>%
-  summarise(end = max(row_id), .groups = "drop")
-
-model_groups <- unified_table %>%
-  mutate(row_id = row_number()) %>%
-  group_by(Model) %>%
-  summarise(end = max(row_id), .groups = "drop")
-
-unified_table_print <- unified_table %>%
-  group_by(Model) %>%
-  mutate(Model_show = ifelse(row_number() == 1, Model, "")) %>%
-  ungroup() %>%
-  group_by(Model, d_true) %>%
-  mutate(d_show = ifelse(row_number() == 1, as.character(d_true), "")) %>%
-  ungroup() %>%
-  select(
-    Model_show,
-    d_show,
-    h,
-    RMSE_Benchmark_print,
-    RMSE_IC_print,
-    RMSE_CV_print,
-    MAE_Benchmark_print,
-    MAE_IC_print,
-    MAE_CV_print
-  )
-
-names(unified_table_print) <- c("$(p,q)$",
-                                "$d$",
-                                "$h$",
-                                "Bench.",
-                                "IC",
-                                "CV",
-                                "Bench.",
-                                "IC",
-                                "CV")
-
-latex_table <- unified_table_print %>%
-  kbl(
-    format = "latex",
-    booktabs = TRUE,
-    longtable = TRUE,
-    escape = FALSE,
-    align = c(
-      "c", "c", "c",
-      "r", "r", "r",
-      "r", "r", "r"
-    ),
-    caption = paste0(
-      "Averaged forecasting results for the unified setting with $T=1000$ ",
-      "under the expanding-window scheme. Results are averaged over the ",
-      "dependence-strength settings. Model orders are reported as $(p,q)$. ",
-      "The smallest RMSPE within each setting is highlighted in red, ",
-      "and the smallest MAPE is highlighted in blue."
-    ),
-    label = "tab:unified_forecast_expanding"
-  ) %>%
-  add_header_above(
-    c(" " = 3, "RMSPE" = 3, "MAPE" = 3),
-    escape = FALSE
-  ) %>%
-  kable_styling(latex_options = "repeat_header", font_size = 8)
-
-for (i in seq_len(max(nrow(d_groups) - 1L, 0L))) {
-  if (!(d_groups$end[i] %in% model_groups$end)) {
-    latex_table <- latex_table %>%
-      row_spec(d_groups$end[i], extra_latex_after = "\\cmidrule(lr){2-9}")
-  }
-}
-
-for (i in seq_len(max(nrow(model_groups) - 1L, 0L))) {
-  latex_table <- latex_table %>%
-    row_spec(model_groups$end[i], extra_latex_after = "\\midrule")
-}
-
-cat(latex_table)
+cat(unified_point_latex, sep = "\n")
 ```
-
 
 
 
@@ -2274,354 +2109,108 @@ p_unified_wis_ratio_expanding <-
 
 
 
+#### Table comparing the conformal methods
+
+```{r}
+unified_conformal_latex <- tab_conformal_wide(
+  unified_forecast_res$interval_summary %>%
+    filter(n == 1000, window_type == "expanding", method == "farma", order_selection_method == "adaptive_ic"),
+  paste0(
+    "Raw ECP, CPD, and IS of the SR, NS, and AC bands for functional IC in the unified setting with $T=1000$ ",
+    "under the expanding-window scheme, averaged over all short-memory orders, memory parameters, and dependence strengths."
+  ),
+  "tab:unified_conformal"
+)
+
+cat(unified_conformal_latex, sep = "\n")
+```
+
+
 #### Table of interval forecasting scores
 
 ```{r}
-benchmark_interval <- unified_forecast_res$interval_summary %>%
-  filter(
-    n == 1000,
-    window_type == "expanding",
-    h %in% c(1, 5, 10),
-    d_true %in% c(0.2, 0.6, 1, 1.4),
-    alpha %in% c(0.05, 0.20),
-    method == "far"
-  ) %>%
-  select(
-    p_true, q_true, d_true, ar_strength, ma_strength,
-    alpha, h, ECP, CPD, Score
-  ) %>%
-  distinct() %>%
-  group_by(p_true, q_true, d_true, alpha, h) %>%
-  summarise(
-    ECP = mean(ECP, na.rm = TRUE),
-    CPD = mean(CPD, na.rm = TRUE),
-    Score = mean(Score, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  mutate(Method = "Benchmark")
+unified_interval_show <- unified_forecast_res$interval_summary %>%
+  filter(n == 1000, window_type == "expanding", abs(alpha - 0.20) < 1e-10,
+         h %in% c(1, 5, 10), d_true %in% c(0.2, 0.6, 1, 1.4))
 
-plugin_interval <- unified_forecast_res$interval_summary %>%
-  filter(
-    n == 1000,
-    window_type == "expanding",
-    h %in% c(1, 5, 10),
-    d_true %in% c(0.2, 0.6, 1, 1.4),
-    alpha %in% c(0.05, 0.20),
-    method == "farma"
-  ) %>%
-  mutate(
-    Method = case_when(
-      order_selection_method == "adaptive_ic" ~ "IC",
-      grepl("^cv", order_selection_method) ~ "CV",
-      TRUE ~ NA_character_
+unified_interval_wide <- bind_rows(
+  unified_interval_show %>%
+    filter(method == "far") %>%
+    select(p_true, q_true, d_true, ar_strength, ma_strength, h, ECP, CPD, Score) %>%
+    distinct() %>%
+    group_by(p_true, q_true, d_true, h) %>%
+    summarise(ECP = mean(ECP), CPD = mean(CPD), Score = mean(Score), .groups = "drop") %>%
+    mutate(M = "B"),
+  unified_interval_show %>%
+    filter(method == "farma") %>%
+    mutate(M = ifelse(order_selection_method == "adaptive_ic", "IC", "CV")) %>%
+    group_by(p_true, q_true, d_true, h, M) %>%
+    summarise(ECP = mean(ECP), CPD = mean(CPD), Score = mean(Score), .groups = "drop")
+) %>%
+  pivot_wider(names_from = c(M, h), values_from = c(ECP, CPD, Score), names_sep = "_") %>%
+  tab_unified_keys()
+
+unified_interval_latex <- tab_longtable(
+  "cc*{9}{r}",
+  paste0(
+    "Raw ECP, CPD, and IS for 80\\% SR prediction intervals in the unified setting with $T=1000$ under the expanding-window scheme, averaged over the dependence strengths. ",
+    "The final rows of each panel report the mean and median over the settings shown. ",
+    "The smallest CPD within each setting and horizon is highlighted in red, and the smallest IS in blue."
+  ),
+  "tab:unified_interval_expanding",
+  tab_horizon_header(c("$(p,q)$", "$d$"), c("Bench.", "IC", "CV")),
+  tab_wide_panels(
+    unified_interval_wide,
+    c("B", "IC", "CV"),
+    list(
+      list(metric = "ECP", col = NA, label = "ECP"),
+      list(metric = "CPD", col = "red", label = "CPD"),
+      list(metric = "Score", col = "blue", label = "IS")
     )
-  ) %>%
-  filter(!is.na(Method)) %>%
-  group_by(p_true, q_true, d_true, alpha, h, Method) %>%
-  summarise(
-    ECP = mean(ECP, na.rm = TRUE),
-    CPD = mean(CPD, na.rm = TRUE),
-    Score = mean(Score, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-interval_table <- bind_rows(benchmark_interval, plugin_interval) %>%
-  mutate(
-    Method = factor(Method, levels = c("Benchmark", "IC", "CV")),
-    CP = case_when(
-      alpha == 0.05 ~ "95\\%",
-      alpha == 0.20 ~ "80\\%"
-    )
-  ) %>%
-  pivot_wider(names_from = Method, values_from = c(ECP, CPD, Score)) %>%
-  arrange(p_true, q_true, d_true, alpha, h) %>%
-  mutate(Model = paste0("$(", p_true, ",", q_true, ")$"))
-
-interval_required <- c(
-  "ECP_Benchmark", "ECP_IC", "ECP_CV",
-  "CPD_Benchmark", "CPD_IC", "CPD_CV",
-  "Score_Benchmark", "Score_IC", "Score_CV"
+  ),
+  tabcolsep = "5pt"
 )
 
-if (nrow(interval_table) == 0L ||
-    any(!is.finite(as.matrix(interval_table[interval_required])))) {
-  stop("Unified interval table data are missing or invalid.", call. = FALSE)
-}
-
-interval_table <- interval_table %>%
-  rowwise() %>%
-  mutate(
-    min_CPD = min(c(CPD_Benchmark, CPD_IC, CPD_CV)),
-    min_Score = min(c(Score_Benchmark, Score_IC, Score_CV)),
-    ECP_Benchmark_print = sprintf("%.4f", ECP_Benchmark),
-    ECP_IC_print = sprintf("%.4f", ECP_IC),
-    ECP_CV_print = sprintf("%.4f", ECP_CV),
-    CPD_Benchmark_print = ifelse(
-      isTRUE(all.equal(CPD_Benchmark, min_CPD)),
-      paste0("\\textcolor{red}{\\textbf{", sprintf("%.4f", CPD_Benchmark), "}}"),
-      sprintf("%.4f", CPD_Benchmark)
-    ),
-    CPD_IC_print = ifelse(
-      isTRUE(all.equal(CPD_IC, min_CPD)),
-      paste0("\\textcolor{red}{\\textbf{", sprintf("%.4f", CPD_IC), "}}"),
-      sprintf("%.4f", CPD_IC)
-    ),
-    CPD_CV_print = ifelse(
-      isTRUE(all.equal(CPD_CV, min_CPD)),
-      paste0("\\textcolor{red}{\\textbf{", sprintf("%.4f", CPD_CV), "}}"),
-      sprintf("%.4f", CPD_CV)
-    ),
-    Score_Benchmark_print = ifelse(
-      isTRUE(all.equal(Score_Benchmark, min_Score)),
-      paste0("\\textcolor{blue}{\\textbf{", sprintf("%.4f", Score_Benchmark), "}}"),
-      sprintf("%.4f", Score_Benchmark)
-    ),
-    Score_IC_print = ifelse(
-      isTRUE(all.equal(Score_IC, min_Score)),
-      paste0("\\textcolor{blue}{\\textbf{", sprintf("%.4f", Score_IC), "}}"),
-      sprintf("%.4f", Score_IC)
-    ),
-    Score_CV_print = ifelse(
-      isTRUE(all.equal(Score_CV, min_Score)),
-      paste0("\\textcolor{blue}{\\textbf{", sprintf("%.4f", Score_CV), "}}"),
-      sprintf("%.4f", Score_CV)
-    )
-  ) %>%
-  ungroup()
-
-cp_groups <- interval_table %>%
-  mutate(row_id = row_number()) %>%
-  group_by(Model, d_true, CP) %>%
-  summarise(end = max(row_id), .groups = "drop")
-
-d_groups <- interval_table %>%
-  mutate(row_id = row_number()) %>%
-  group_by(Model, d_true) %>%
-  summarise(end = max(row_id), .groups = "drop")
-
-model_groups <- interval_table %>%
-  mutate(row_id = row_number()) %>%
-  group_by(Model) %>%
-  summarise(end = max(row_id), .groups = "drop")
-
-interval_table_print <- interval_table %>%
-  group_by(Model) %>%
-  mutate(Model_show = ifelse(row_number() == 1, Model, "")) %>%
-  ungroup() %>%
-  group_by(Model, d_true) %>%
-  mutate(d_show = ifelse(row_number() == 1, as.character(d_true), "")) %>%
-  ungroup() %>%
-  group_by(Model, d_true, CP) %>%
-  mutate(CP_show = ifelse(row_number() == 1, CP, "")) %>%
-  ungroup() %>%
-  select(
-    Model_show, d_show, CP_show, h,
-    ECP_Benchmark_print, ECP_IC_print, ECP_CV_print,
-    CPD_Benchmark_print, CPD_IC_print, CPD_CV_print,
-    Score_Benchmark_print, Score_IC_print, Score_CV_print
-  )
-
-names(interval_table_print) <- c(
-  "$(p,q)$", "$d$", "CP", "$h$",
-  "Bench.", "IC", "CV",
-  "Bench.", "IC", "CV",
-  "Bench.", "IC", "CV"
-)
-
-latex_table <- interval_table_print %>%
-  kbl(
-    format = "latex",
-    booktabs = TRUE,
-    longtable = TRUE,
-    escape = FALSE,
-    align = rep("c", 13),
-    caption = paste0(
-      "Averaged interval forecasting results for the unified setting ",
-      "with $T=1000$ under the expanding-window scheme. ",
-      "Results are averaged over the dependence-strength settings. ",
-      "The smallest CPD within each setting is highlighted in red, ",
-      "and the smallest interval score is highlighted in blue."
-    ),
-    label = "tab:unified_interval_expanding"
-  ) %>%
-  add_header_above(
-    c(" " = 4, "ECP" = 3, "CPD" = 3, "IS" = 3),
-    escape = FALSE
-  ) %>%
-  kable_styling(latex_options = "repeat_header", font_size = 7)
-
-for (i in seq_len(max(nrow(cp_groups) - 1L, 0L))) {
-  if (!(cp_groups$end[i] %in% d_groups$end)) {
-    latex_table <- latex_table %>%
-      row_spec(cp_groups$end[i], extra_latex_after = "\\cmidrule(lr){3-13}")
-  }
-}
-
-for (i in seq_len(max(nrow(d_groups) - 1L, 0L))) {
-  if (!(d_groups$end[i] %in% model_groups$end)) {
-    latex_table <- latex_table %>%
-      row_spec(d_groups$end[i], extra_latex_after = "\\cmidrule(lr){2-13}")
-  }
-}
-
-for (i in seq_len(max(nrow(model_groups) - 1L, 0L))) {
-  latex_table <- latex_table %>%
-    row_spec(model_groups$end[i], extra_latex_after = "\\midrule")
-}
-
-latex_table <- sub(
-  "\\begin{longtable}[t]",
-  "\\begin{longtable}[c]",
-  latex_table,
-  fixed = TRUE
-)
-
-cat("\\begingroup\n")
-cat("\\setlength{\\tabcolsep}{2pt}\n")
-cat("\\setlength{\\LTleft}{\\fill}\n")
-cat("\\setlength{\\LTright}{\\fill}\n")
-cat(latex_table)
-cat("\\endgroup\n")
+cat(unified_interval_latex, sep = "\n")
 ```
+
 
 
 #### Table of weighted interval scores
 
 ```{r}
-benchmark_wis <- unified_wis %>%
-  filter(
-    n == 1000,
-    window_type == "expanding",
-    h %in% 1:10,
-    d_true %in% c(0.2, 0.6, 1, 1.4),
-    method == "far"
-  ) %>%
-  select(p_true, q_true, d_true, ar_strength, ma_strength, h, WIS) %>%
-  distinct() %>%
-  group_by(p_true, q_true, d_true, h) %>%
-  summarise(WIS = mean(WIS), .groups = "drop") %>%
-  mutate(Method = "FARFIMA$(1,1,0)$")
+unified_wis_show <- unified_forecast_res$wis_summary %>%
+  filter(n == 1000, window_type == "expanding", d_true %in% c(0.2, 0.6, 1, 1.4))
 
-plugin_wis <- unified_wis %>%
-  filter(
-    n == 1000,
-    window_type == "expanding",
-    h %in% 1:10,
-    d_true %in% c(0.2, 0.6, 1, 1.4),
-    method == "farma"
-  ) %>%
-  mutate(
-    Method = case_when(
-      order_selection_method == "adaptive_ic" ~ "Functional IC",
-      grepl("^cv", order_selection_method) ~ "CV",
-      TRUE ~ NA_character_
-    )
-  ) %>%
-  filter(!is.na(Method)) %>%
-  group_by(p_true, q_true, d_true, h, Method) %>%
-  summarise(WIS = mean(WIS), .groups = "drop")
+unified_wis_long <- bind_rows(
+  unified_wis_show %>%
+    filter(method == "far") %>%
+    select(p_true, q_true, d_true, ar_strength, ma_strength, h, WIS) %>%
+    distinct() %>%
+    group_by(p_true, q_true, d_true, h) %>%
+    summarise(WIS = mean(WIS), .groups = "drop") %>%
+    mutate(Method = "Bench."),
+  unified_wis_show %>%
+    filter(method == "farma") %>%
+    mutate(Method = ifelse(order_selection_method == "adaptive_ic", "IC", "CV")) %>%
+    group_by(p_true, q_true, d_true, h, Method) %>%
+    summarise(WIS = mean(WIS), .groups = "drop")
+) %>%
+  tab_unified_keys()
 
-unified_wis_print <- bind_rows(benchmark_wis, plugin_wis) %>%
-  mutate(
-    Model = paste0("$(", p_true, ",", q_true, ")$"),
-    Method = factor(
-      Method,
-      levels = c("FARFIMA$(1,1,0)$", "Functional IC", "CV")
-    )
-  ) %>%
-  select(p_true, q_true, Model, d_true, Method, h, WIS)
-
-if (nrow(unified_wis_print) == 0L || any(!is.finite(unified_wis_print$WIS))) {
-  stop("Unified WIS table data are missing or invalid.", call. = FALSE)
-}
-
-if (anyDuplicated(unified_wis_print[c(
-  "p_true", "q_true", "d_true", "Method", "h"
-)])) {
-  stop("Unified WIS table keys are not unique.", call. = FALSE)
-}
-
-unified_wis_print <- unified_wis_print %>%
-  group_by(Model, d_true, h) %>%
-  mutate(
-    min_WIS = min(WIS),
-    WIS_print = ifelse(
-      round(WIS, 4) == round(min_WIS, 4),
-      paste0("\\textcolor{purple}{\\textbf{", sprintf("%.4f", WIS), "}}"),
-      sprintf("%.4f", WIS)
-    )
-  ) %>%
-  ungroup() %>%
-  select(Model, d_true, Method, h, WIS_print) %>%
-  pivot_wider(names_from = h, values_from = WIS_print, names_prefix = "h_") %>%
-  arrange(Model, d_true, Method)
-
-wis_d_groups <- unified_wis_print %>%
-  mutate(row_id = row_number()) %>%
-  group_by(Model, d_true) %>%
-  summarise(end = max(row_id), .groups = "drop")
-
-wis_model_groups <- unified_wis_print %>%
-  mutate(row_id = row_number()) %>%
-  group_by(Model) %>%
-  summarise(end = max(row_id), .groups = "drop")
-
-unified_wis_print <- unified_wis_print %>%
-  group_by(Model) %>%
-  mutate(Model_show = ifelse(row_number() == 1, Model, "")) %>%
-  ungroup() %>%
-  group_by(Model, d_true) %>%
-  mutate(d_show = ifelse(row_number() == 1, as.character(d_true), "")) %>%
-  ungroup() %>%
-  select(Model_show, d_show, Method, all_of(paste0("h_", 1:10)))
-
-names(unified_wis_print) <- c(
-  "$(p,q)$", "$d$", "Method", paste0("$", 1:10, "$")
+unified_wis_latex <- tab_longtable(
+  "cclrrrrrrrrrr",
+  paste0(
+    "Raw WIS in the unified setting with $T=1000$ under the expanding-window scheme, averaged over the dependence strengths. ",
+    "WIS combines the absolute point forecast error with the IS of the 80\\% and 95\\% SR prediction intervals. ",
+    "The final rows report the mean and median over the settings shown. ",
+    "The smallest WIS within each setting and horizon is highlighted in purple."
+  ),
+  "tab:unified_wis_expanding",
+  tab_wis_header(c("$(p,q)$", "$d$")),
+  tab_wis_rows(unified_wis_long, c("Bench.", "IC", "CV")),
+  tabcolsep = "3pt"
 )
 
-wis_latex_table <- unified_wis_print %>%
-  kbl(
-    format = "latex",
-    booktabs = TRUE,
-    longtable = TRUE,
-    escape = FALSE,
-    align = c("c", "c", "l", rep("r", 10)),
-    caption = paste0(
-      "Weighted interval scores for the unified setting with $T=1000$ ",
-      "under the expanding-window scheme. Results are averaged over the ",
-      "dependence-strength settings. WIS combines the 80\\% and 95\\% ",
-      "prediction intervals. The smallest WIS within each setting and horizon ",
-      "is highlighted in purple."
-    ),
-    label = "tab:unified_wis_expanding"
-  ) %>%
-  add_header_above(c(" " = 3, "Forecast horizon $h$" = 10), escape = FALSE) %>%
-  kable_styling(latex_options = "repeat_header", font_size = 7)
-
-for (i in seq_len(max(nrow(wis_d_groups) - 1L, 0L))) {
-  if (!(wis_d_groups$end[i] %in% wis_model_groups$end)) {
-    wis_latex_table <- wis_latex_table %>%
-      row_spec(wis_d_groups$end[i], extra_latex_after = "\\cmidrule(lr){2-13}")
-  }
-}
-
-for (i in seq_len(max(nrow(wis_model_groups) - 1L, 0L))) {
-  wis_latex_table <- wis_latex_table %>%
-    row_spec(wis_model_groups$end[i], extra_latex_after = "\\midrule")
-}
-
-wis_latex_table <- sub(
-  "\\begin{longtable}[t]",
-  "\\begin{longtable}[c]",
-  wis_latex_table,
-  fixed = TRUE
-)
-
-cat("\\begingroup\n")
-cat("\\setlength{\\tabcolsep}{2pt}\n")
-cat("\\setlength{\\LTleft}{\\fill}\n")
-cat("\\setlength{\\LTright}{\\fill}\n")
-cat(wis_latex_table)
-cat("\\endgroup\n")
+cat(unified_wis_latex, sep = "\n")
 ```
-

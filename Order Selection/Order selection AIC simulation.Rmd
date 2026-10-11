@@ -523,15 +523,26 @@ method_shapes <- c(
 
 ### Plotting functions
 ```{r}
-plot_order_accuracy_one_model <- function(df, model_show, title = NULL, show_legend = FALSE)
-{
+plot_base_size <- 25
+plot_title_size <- 28
+strip_text_size <- 20
+axis_text_size <- 15
+shared_label_size <- 30
+legend_text_size <- 7
+legend_point_size <- 4.5
+legend_line_width <- 1.5
+plot_line_width <- 1
+plot_point_size <- 2.5
+axis_tick_width <- 0.6
+panel_spacing_size <- 0.75
+plot_margin_size <- 5
+
+plot_order_accuracy_one_model <- function(df, model_show, title = NULL) {
   df_sub <- df %>%
     filter(model == model_show)
 
-  model_clean <- gsub("[() ]", "", model_show)
-  pq <- strsplit(model_clean, ",")[[1]]
-  p0 <- as.integer(pq[1])
-  q0 <- as.integer(pq[2])
+  pq <- as.integer(strsplit(gsub("[() ]", "", model_show), ",")[[1]])
+  mixed <- pq[1] > 0 && pq[2] > 0
 
   g <- ggplot(
     df_sub,
@@ -544,47 +555,37 @@ plot_order_accuracy_one_model <- function(df, model_show, title = NULL, show_leg
       shape = method
     )
   ) +
-    geom_line(linewidth = 0.65) +
-    geom_point(size = 2.0) +
-    scale_colour_manual(values = method_cols) +
-    scale_linetype_manual(values = method_ltys) +
-    scale_shape_manual(values = method_shapes) +
+    geom_line(linewidth = plot_line_width) +
+    geom_point(size = plot_point_size) +
+    scale_colour_manual(values = method_cols, drop = FALSE) +
+    scale_linetype_manual(values = method_ltys, drop = FALSE) +
+    scale_shape_manual(values = method_shapes, drop = FALSE) +
     scale_y_continuous(
-      limits = c(0, 1.02),
-      breaks = seq(0, 1, by = 0.2),
-      expand = expansion(mult = c(0.01, 0.03))
+      limits = c(0, 1),
+      breaks = if (mixed) c(0, 0.5, 1) else seq(0, 1, 0.25),
+      expand = expansion(mult = c(0.03, 0.05))
     ) +
-    scale_x_discrete(drop = FALSE) +
-    labs(
-      title = title,
-      x = NULL,
-      y = NULL,
-      colour = "Method",
-      linetype = "Method",
-      shape = "Method"
-    ) +
-    theme_classic(base_size = 18) +
+    scale_x_discrete(drop = FALSE, expand = expansion(mult = c(0.12, 0.12))) +
+    labs(title = title, x = NULL, y = NULL) +
+    theme_classic(base_size = plot_base_size) +
     theme(
-      legend.position = if (show_legend) "top" else "none",
-      legend.direction = "horizontal",
-      legend.title = element_text(size = 16, face = "bold"),
-      legend.text = element_text(size = 14),
-      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      legend.position = "none",
+      plot.title = element_text(size = plot_title_size, face = "bold", hjust = 0.5),
       strip.background = element_rect(fill = "grey95", colour = "black"),
-      strip.text = element_text(size = 12),
-      axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
-      axis.text.y = element_text(size = 11),
-      axis.ticks = element_line(linewidth = 0.5),
-      axis.ticks.length = unit(2.5, "pt"),
-      panel.spacing = unit(0.65, "lines"),
-      plot.margin = margin(4, 4, 4, 4)
+      strip.text = element_text(size = strip_text_size),
+      axis.text.x = element_text(size = axis_text_size),
+      axis.text.y = element_text(size = axis_text_size),
+      axis.ticks = element_line(linewidth = axis_tick_width),
+      axis.ticks.length = unit(3, "pt"),
+      panel.spacing = unit(panel_spacing_size, "lines"),
+      plot.margin = margin(plot_margin_size, plot_margin_size, plot_margin_size, plot_margin_size)
     )
 
-  if (p0 > 0 && q0 == 0) {
+  if (pq[1] > 0 && pq[2] == 0) {
     g <- g + facet_grid(. ~ psi_label, labeller = label_parsed)
-  } else if (p0 == 0 && q0 > 0) {
+  } else if (pq[1] == 0 && pq[2] > 0) {
     g <- g + facet_grid(. ~ nu_label, labeller = label_parsed)
-  } else if (p0 > 0 && q0 > 0) {
+  } else {
     g <- g + facet_grid(nu_label ~ psi_label, labeller = label_parsed)
   }
 
@@ -592,91 +593,55 @@ plot_order_accuracy_one_model <- function(df, model_show, title = NULL, show_leg
 }
 
 make_method_legend <- function() {
-  methods <- c("Box Jenkins", "Functional IC", "Auto Functional IC")
-
-  make_custom_method_legend(
-    methods = methods,
-    colours = method_cols,
-    linetypes = method_ltys,
-    shapes = method_shapes,
-    labels = methods,
-    title = "Order selection",
-    base_size = 18,
-    point_size = 3,
-    line_width = 0.9
+  legend_data <- expand.grid(
+    method = factor(names(method_cols), levels = names(method_cols)),
+    x = c(1, 2)
   )
+
+  legend_plot <- ggplot(
+    legend_data,
+    aes(x = x, y = 1, colour = method, linetype = method, shape = method)
+  ) +
+    geom_line(linewidth = legend_line_width) +
+    geom_point(size = legend_point_size) +
+    scale_colour_manual(values = method_cols) +
+    scale_linetype_manual(values = method_ltys) +
+    scale_shape_manual(values = method_shapes) +
+    labs(colour = "Order selection", linetype = "Order selection", shape = "Order selection") +
+    theme_void(base_size = legend_text_size * ggplot2::.pt) +
+    paper_legend_theme(base_size = legend_text_size * ggplot2::.pt, position = "top")
+
+  get_visible_legend(legend_plot)
 }
 
-combine_four_models_shared_axes <- function(
-    df,
-    models,
-    titles,
-    file_name = NULL,
-    width = 16,
-    height = 12
-) {
-  
-  legend <- make_method_legend()
-  
-  p1 <- plot_order_accuracy_one_model(df, models[1], titles[1], show_legend = FALSE) +
-    theme(legend.position = "none")
-  
-  p2 <- plot_order_accuracy_one_model(df, models[2], titles[2], show_legend = FALSE) +
-    theme(legend.position = "none")
-  
-  p3 <- plot_order_accuracy_one_model(df, models[3], titles[3], show_legend = FALSE) +
-    theme(legend.position = "none")
-  
-  p4 <- plot_order_accuracy_one_model(df, models[4], titles[4], show_legend = FALSE) +
-    theme(legend.position = "none")
-  
-  main_grid <- cowplot::plot_grid(
-    p1, p2,
-    p3, p4,
-    ncol = 2,
-    align = "hv",
-    axis = "tblr"
-  )
-  
+combine_four_models_shared_axes <- function(df,
+                                            models,
+                                            titles,
+                                            file_name = NULL,
+                                            width = 16,
+                                            height = 14) {
+  panels <- lapply(seq_along(models), function(k) {
+    plot_order_accuracy_one_model(df, models[k], titles[k])
+  })
+
+  main_grid <- cowplot::plot_grid(plotlist = panels, ncol = 2, align = "hv", axis = "tblr")
+
   grid_with_shared_labels <- cowplot::ggdraw() +
-    cowplot::draw_plot(
-      main_grid,
-      x = 0.075,
-      y = 0.08,
-      width = 0.91,
-      height = 0.90
-    ) +
-    cowplot::draw_label(
-      "Selection accuracy",
-      x = 0.018,
-      y = 0.53,
-      angle = 90,
-      size = 20
-    ) +
-    cowplot::draw_label(
-      "Sample size T",
-      x = 0.53,
-      y = 0.02,
-      size = 20
-    )
-  
+    cowplot::draw_plot(main_grid, x = 0.078, y = 0.085, width = 0.90, height = 0.89) +
+    cowplot::draw_label("Selection accuracy", x = 0.020, y = 0.53, angle = 90, size = shared_label_size) +
+    cowplot::draw_label("Sample size T", x = 0.53, y = 0.022, size = shared_label_size)
+
   final_plot <- cowplot::plot_grid(
-    legend,
+    make_method_legend(),
     grid_with_shared_labels,
     ncol = 1,
-    rel_heights = c(0.06, 1)
+    rel_heights = c(0.08, 1)
   )
-  
+
   if (!is.null(file_name)) {
-    ggsave(
-      filename = file_name,
-      plot = final_plot,
-      width = width,
-      height = height,
-      dpi = 300
-    )
+    ggsave(filename = file_name, plot = final_plot, width = width, height = height)
   }
-  
+
   final_plot
 }
 
@@ -691,7 +656,7 @@ p_far_fma <- combine_four_models_shared_axes(
   titles = c("FARMA(1,0)", "FARMA(2,0)", "FARMA(0,1)", "FARMA(0,2)"),
   file_name = "Sim Plots/order_accuracy_far_fma_2x2.pdf",
   width = 16,
-  height = 12
+  height = 14
 )
 
 p_farma <- combine_four_models_shared_axes(
@@ -700,7 +665,7 @@ p_farma <- combine_four_models_shared_axes(
   titles = c("FARMA(1,1)", "FARMA(2,1)", "FARMA(1,2)", "FARMA(2,2)"),
   file_name = "Sim Plots/order_accuracy_farma_2x2.pdf",
   width = 16,
-  height = 12
+  height = 14
 )
 
 p_farma

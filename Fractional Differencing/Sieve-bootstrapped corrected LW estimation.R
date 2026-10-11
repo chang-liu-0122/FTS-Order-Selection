@@ -44,11 +44,14 @@ compute_bias_LPWN_multi <- function(
     scores <- lead$scores
 
     for (k in seq_len(K)) {
-      d_boot_mat[b, k] <- LPWN_general(
-        scores,
-        m_const = m_const,
-        R_short = R_short_vec[k],
-        R_noise = R_noise
+      d_boot_mat[b, k] <- tryCatch(
+        LPWN_general(
+          scores,
+          m_const = m_const,
+          R_short = R_short_vec[k],
+          R_noise = R_noise
+        ),
+        error = function(e) NA_real_
       )
     }
   }

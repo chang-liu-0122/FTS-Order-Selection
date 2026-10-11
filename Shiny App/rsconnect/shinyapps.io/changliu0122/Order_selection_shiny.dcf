@@ -1,0 +1,12 @@
+name: Order_selection_shiny
+title: Order_selection_shiny
+username: changliu0122
+account: changliu0122
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 18087495
+bundleId: 12647119
+url: https://changliu0122.shinyapps.io/Order_selection_shiny/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE

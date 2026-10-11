@@ -1,5 +1,5 @@
 ---
-title: "French functional fertility-rate changes and mortality"
+title: "England and Wales fertility and French mortality"
 subtitle: "Fractional integration, order selection, and conformal forecasting"
 output:
   html_document:
@@ -131,9 +131,9 @@ source(file.path(project_root, "Fractional Differencing/LPWN.R"))
 source(file.path(project_root, "Fractional Differencing/sieve_bootstrap.R"))
 source(file.path(project_root, "Fractional Differencing/Sieve-bootstrapped corrected LW estimation.R"))
 source(file.path(project_root, "Operator Estimation/Kuenzer FARMA Estimation.R"))
-source(file.path(project_root, "Forecasting/Forecasting Helper.R"))
-source(file.path(project_root, "Forecasting/forecast_compare_sim.R"))
-source(file.path(project_root, "Forecasting/unified_compare_sim.R"))
+source(file.path(project_root, "Forecasting/forecast_helpers.R"))
+source(file.path(project_root, "Forecasting/ideal_pipeline.R"))
+source(file.path(project_root, "Forecasting/unified_pipeline.R"))
 source(file.path(project_root, "Forecasting/forecast_plot_helpers.R"))
 
 method_levels <- c(
@@ -239,54 +239,41 @@ plot_FACF_topright <- function(rho,Blueline,ci,...){
 ```
 
 
-# Fertility data
+# England and Wales fertility
 
 ## Data and preprocessing
 
 ```{r data-functions}
-repair_smooth <- function(raw, smooth) {
-  raw <- as.matrix(raw)
-  smooth <- as.matrix(smooth)
-  smooth[!is.finite(smooth)] <- raw[!is.finite(smooth)]
-  smooth
-}
+raw <- read.table("Empirical Study/Fertility Data/asfrRR.txt", skip = 2, header = TRUE) |>
+  filter(Code == "GBRTENW", Age %in% 15:49) |>
+  pivot_wider(id_cols = Age, names_from = Year, values_from = ASFR) |>
+  column_to_rownames("Age") |>
+  as.matrix()
 
-fertility_change <- function(x) {
-  previous <- x[, -ncol(x), drop = FALSE]
-  current <- x[, -1, drop = FALSE]
-  denominator <- previous + current
-  change <- 2 * (previous - current) / denominator
-  change[denominator == 0] <- 0
-  colnames(change) <- colnames(x)[-1]
-  change
-}
+exposure <- read.table("Empirical Study/Fertility Data/exposRR.txt", skip = 2, header = TRUE) |>
+  filter(Code == "GBRTENW", Age %in% 15:49) |>
+  pivot_wider(id_cols = Age, names_from = Year, values_from = Exposure) |>
+  column_to_rownames("Age") |>
+  as.matrix()
 
-fer <- read_rds("Empirical Study/demog_list_asfr.rds")
-country_codes <- c(France = "FRATNP")
+ew <- demogdata(
+  data = raw,
+  pop = exposure,
+  ages = 15:49,
+  years = as.integer(colnames(raw)),
+  type = "fertility",
+  label = "England and Wales",
+  name = "ASFR",
+  lambda = 0.4
+)
 
-fertility_data <- list()
+smooth <- smooth.demogdata(ew, method = "cspline")$rate[[1]]
 
-for (country in names(country_codes)) {
-  code <- country_codes[[country]]
-  raw <- fer[[code]]$raw$rate[[paste0(code, "_ASFR")]] |> as.matrix()
-  smooth <- fer[[code]]$smooth$rate[[paste0(code, "_ASFR")]] |> as.matrix()
-  smooth <- repair_smooth(raw, smooth)
-
-  fertility_data[[country]] <- list(
-    raw = raw,
-    smooth = smooth,
-    raw_change = fertility_change(raw),
-    smooth_change = fertility_change(smooth)
+fertility_data <- list(
+  `England and Wales` = list(
+    raw = (raw^0.4 - 1) / 0.4,
+    smooth = (smooth^0.4 - 1) / 0.4
   )
-}
-
-france_change <- fertility_data$France$smooth_change
-
-france_centered <- sweep(
-  france_change,
-  1,
-  rowMeans(france_change),
-  "-"
 )
 ```
 
@@ -294,47 +281,25 @@ france_centered <- sweep(
 ### Raw and smoothed rainbow plots
 
 ```{r}
-savepdf("Empirical Study/Empirical Plots/France_fertility_raw_rainbow_plot", width = 12, height = 10)
+savepdf("Empirical Study/Empirical Plots/England_Wales_fertility_raw_rainbow_plot", width = 12, height = 10)
 
 plot(
-  fts(1:nrow(fertility_data$France$raw), fertility_data$France$raw),
+  fts(15:49, fertility_data$`England and Wales`$raw),
   xlab = "Age",
-  ylab = "Fertility rate"
+  ylab = "Box-Cox transformed fertility rate"
 )
 
 dev.off()
 
-savepdf("Empirical Study/Empirical Plots/France_fertility_raw_change_rainbow_plot", width = 12, height = 10)
+savepdf("Empirical Study/Empirical Plots/England_Wales_fertility_smooth_rainbow_plot", width = 12, height = 10)
 
 plot(
-  fts(1:nrow(fertility_data$France$raw_change), fertility_data$France$raw_change),
+  fts(15:49, fertility_data$`England and Wales`$smooth),
   xlab = "Age",
-  ylab = "Incremental fertility rate"
+  ylab = "Box-Cox transformed fertility rate"
 )
 
 dev.off()
-
-
-savepdf("Empirical Study/Empirical Plots/France_fertility_smooth_rainbow_plot", width = 12, height = 10)
-
-plot(
-  fts(1:nrow(fertility_data$France$smooth), fertility_data$France$smooth),
-  xlab = "Age",
-  ylab = "Fertility rate"
-)
-
-dev.off()
-
-savepdf("Empirical Study/Empirical Plots/France_fertility_smooth_change_rainbow_plot", width = 12, height = 10)
-
-plot(
-  fts(1:nrow(fertility_data$France$smooth_change), fertility_data$France$smooth_change),
-  xlab = "Age",
-  ylab = "Incremental fertility rate"
-)
-
-dev.off()
-
 ```
 
 
@@ -343,53 +308,38 @@ dev.off()
 
 ```{r facf-fpacf-plots}
 savepdf(
-  "Empirical Study/Empirical Plots/France_fertility_change_facf",
+  "Empirical Study/Empirical Plots/England_Wales_fertility_facf",
   width = 12,
   height = 10,
   toplines = 0.8
 )
 
-france_identification <- fdaACF::obtain_FACF(
-  t(france_change),
-  v = 1:35,
-  nlags = 20,
+fertility_identification <- fdaACF::obtain_FACF(
+  t(fertility_data$`England and Wales`$smooth),
+  v = 15:49,
+  nlags = 40,
   ci = 0.95,
   estimation = "MC",
   figure = FALSE
 )
 
 plot_FACF_topright(
-  rho = france_identification$rho,
-  Blueline = france_identification$Blueline,
+  rho = fertility_identification$rho,
+  Blueline = fertility_identification$Blueline,
   ci = 0.95,
-  ylab = "Incremental fertility rate fACF",
+  ylab = "Fertility rate fACF",
   yaxt = "n",
-  ylim = c(0, 0.5)
+  ylim = c(0, 0.7)
 )
 
 
 axis(
   side = 2,
-  at = seq(0, 0.5, by = 0.05),
-  labels = seq(0, 0.5, by = 0.05)
+  at = seq(0, 0.7, by = 0.1),
+  labels = seq(0, 0.7, by = 0.1)
 )
 
 dev.off()
-```
-
-## Stationarity checks
-
-The stationarity check uses all available smoothed French fertility-rate changes. The null hypothesis of `ftsa::T_stationary()` is that the functional time series is stationary.
-
-```{r stationarity-tests}
-set.seed(123)
-ftsa::T_stationary(
-  sample = fertility_data$France$smooth_change,
-  cumulative_var = 0.95,
-  J = 100,
-  MC_rep = 5000,
-  pivotal = TRUE
-)
 ```
 
 
@@ -403,24 +353,25 @@ forecast_results <- list()
 for (country in names(fertility_data)) {
   result_path <- file.path(
     "Empirical Study/results",
-    paste0(tolower(country), "_fertility_change_forecast.rds")
+    "england_wales_fertility_forecast.rds"
   )
 
   if (!params$rerun_models && file.exists(result_path)) {
     result <- readRDS(result_path)
   } else {
-    result <- rolling_forecasting_pipeline_compact_order_method(
-      X = fertility_data[[country]]$smooth_change,
+    result <- unified_pipeline(
+      X = fertility_data[[country]]$smooth,
+      X_eval = fertility_data[[country]]$raw,
       h_max = 10,
-      train_ratio = 0.7,
-      valid_ratio = 0.15,
+      train_ratio = 0.6,
+      valid_ratio = 0.2,
       alpha_set = c(0.2, 0.05),
       window_types = "expanding",
       p_max = 5,
       q_max = 5,
       Npc = 1,
       B = 399,
-      m_const = 0.65,
+      m_const = 0.75,
       far_pve = 0.95,
       fracdiff_trim = 20,
       seed = 123,
@@ -599,6 +550,87 @@ summarise_interval_metrics <- function(result, fitted_data, observed_data) {
     dplyr::select(Method, alpha, h, ECP, CPD, Score)
 }
 
+summarise_interval_metrics_by_rule <- function(result, fitted_data, observed_data) {
+  error_data <- result$error_detail |>
+    attach_method()
+  calibration_data <- result$calibration_detail |>
+    attach_method()
+  metric_rows <- list()
+  row_index <- 0L
+
+  for (i in seq_len(nrow(error_data))) {
+    error_matrix <- error_data$error[[i]]
+    t0_now <- error_data$t0[i]
+    target_columns <- t0_now + seq_len(ncol(error_matrix))
+    forecast_matrix <-
+      fitted_data[, target_columns, drop = FALSE] + error_matrix
+    observed_matrix <- observed_data[, target_columns, drop = FALSE]
+    method_calibration <- calibration_data |>
+      filter(Method == error_data$Method[i])
+
+    for (j in seq_len(nrow(method_calibration))) {
+      alpha_now <- method_calibration$alpha[j]
+      gamma_now <- method_calibration$gamma[[j]]
+      zeta_now <- method_calibration$zeta[[j]]
+      Q_now <- method_calibration$Q_hat[[j]]
+      aci_Q_now <- method_calibration$aci_Q[[j]]
+
+      for (h_now in seq_len(ncol(forecast_matrix))) {
+        gamma_h <- as.numeric(gamma_now[[h_now]])
+        f_h <- forecast_matrix[, h_now]
+        y_h <- observed_matrix[, h_now]
+
+        bands <- list(
+          grid_sd = list(
+            lower = f_h - zeta_now[h_now] * gamma_h,
+            upper = f_h + zeta_now[h_now] * gamma_h
+          ),
+          scores = conformal_interval(f_h, gamma_h, Q_now[h_now]),
+          aci = conformal_interval(
+            f_h, gamma_h, aci_Q_now[as.character(t0_now), h_now]
+          )
+        )
+
+        for (rule_now in names(bands)) {
+          lower <- bands[[rule_now]]$lower
+          upper <- bands[[rule_now]]$upper
+          keep <- is.finite(y_h) & is.finite(lower) & is.finite(upper)
+          if (!any(keep)) next
+
+          row_index <- row_index + 1L
+          metric_rows[[row_index]] <- tibble(
+            Rule = rule_now,
+            Method = error_data$Method[i],
+            alpha = alpha_now,
+            h = h_now,
+            covered = sum(y_h[keep] >= lower[keep] & y_h[keep] <= upper[keep]),
+            score_sum = sum(interval_score_cells(
+              y_h[keep], lower[keep], upper[keep], alpha_now
+            )),
+            n = sum(keep)
+          )
+        }
+      }
+    }
+  }
+
+  bind_rows(metric_rows) |>
+    group_by(Rule, Method, alpha, h) |>
+    summarise(
+      covered = sum(covered),
+      score_sum = sum(score_sum),
+      n = sum(n),
+      .groups = "drop"
+    ) |>
+    mutate(
+      ECP = covered / n,
+      CPD = abs(ECP - (1 - alpha)),
+      Score = score_sum / n,
+      Rule = factor(Rule, levels = c("grid_sd", "scores", "aci"))
+    ) |>
+    dplyr::select(Rule, Method, alpha, h, covered, score_sum, n, ECP, CPD, Score)
+}
+
 summarise_wis <- function(point, interval) {
   interval |>
     group_by(Method, h) |>
@@ -618,15 +650,22 @@ for (country in names(forecast_results)) {
   result <- forecast_results[[country]]
   point <- summarise_point_metrics(
     result,
-    fitted_data = fertility_data[[country]]$smooth_change,
-    observed_data = fertility_data[[country]]$raw_change
+    fitted_data = fertility_data[[country]]$smooth,
+    observed_data = fertility_data[[country]]$raw
   )
-  interval <- summarise_interval_metrics(
+  interval <- summarise_interval_metrics_by_rule(
     result,
-    fitted_data = fertility_data[[country]]$smooth_change,
-    observed_data = fertility_data[[country]]$raw_change
-  )
-  wis <- summarise_wis(point, interval)
+    fitted_data = fertility_data[[country]]$smooth,
+    observed_data = fertility_data[[country]]$raw
+  ) |>
+    mutate(Rule = factor(recode(as.character(Rule), grid_sd = "SR", scores = "NS", aci = "AC"), levels = c("SR", "NS", "AC"))) |>
+    dplyr::select(Rule, Method, alpha, h, ECP, CPD, Score)
+  wis <- bind_rows(
+    summarise_wis(point, interval |> filter(Rule == "SR")) |> mutate(Rule = "SR", .before = 1),
+    summarise_wis(point, interval |> filter(Rule == "NS")) |> mutate(Rule = "NS", .before = 1),
+    summarise_wis(point, interval |> filter(Rule == "AC")) |> mutate(Rule = "AC", .before = 1)
+  ) |>
+    mutate(Rule = factor(Rule, levels = c("SR", "NS", "AC")))
 
   metric_results[[country]] <- list(
     point = point,
@@ -668,8 +707,8 @@ interval_ratios <- interval_metrics |>
   left_join(
     interval_metrics |>
       filter(Method == "Benchmark (FARFIMA(1,1,0))") |>
-      dplyr::select(Country, alpha, h, benchmark_Score = Score),
-    by = c("Country", "alpha", "h")
+      dplyr::select(Country, Rule, alpha, h, benchmark_Score = Score),
+    by = c("Country", "Rule", "alpha", "h")
   ) |>
   mutate(`Score ratio` = Score / benchmark_Score)
 
@@ -677,19 +716,17 @@ wis_ratios <- wis_metrics |>
   left_join(
     wis_metrics |>
       filter(Method == "Benchmark (FARFIMA(1,1,0))") |>
-      dplyr::select(Country, h, benchmark_WIS = WIS),
-    by = c("Country", "h")
+      dplyr::select(Country, Rule, h, benchmark_WIS = WIS),
+    by = c("Country", "Rule", "h")
   ) |>
   mutate(`WIS ratio` = WIS / benchmark_WIS)
 ```
 
 ### Point accuracy
 
-The point-forecast table reports RMSPE and MAPE for all ten horizons. The smallest RMSPE within each country and horizon is red, and the smallest MAPE is blue. Forecasts are fitted to the smoothed changes and evaluated against the corresponding raw fertility-rate changes.
-
 ```{r point-wis-table}
 point_metrics |>
-  filter(Country == "France") |>
+  filter(Country == "England and Wales") |>
   group_by(Country, h) |>
   mutate(
     RMSPE = format_best_html(RMSE, "red"),
@@ -726,7 +763,7 @@ point_metrics |>
 ```{r fertility-ratio-plots, fig.width=12, fig.height=6}
 fertility_point_ratio_data <- point_ratios |>
   filter(
-    Country == "France",
+    Country == "England and Wales",
     Method != "Benchmark (FARFIMA(1,1,0))"
   ) |>
   dplyr::select(Method, h, `RMSPE ratio`, `MAPE ratio`) |>
@@ -791,10 +828,11 @@ fertility_point_ratio_plot <- ggplot(
 
 fertility_interval_score_ratio_data <- interval_ratios |>
   filter(
-    Country == "France",
+    Country == "England and Wales",
     Method != "Benchmark (FARFIMA(1,1,0))"
   ) |>
   transmute(
+    Rule,
     Method,
     h,
     `Nominal coverage` = factor(
@@ -823,7 +861,7 @@ fertility_interval_score_ratio_plot <- ggplot(
   ) +
   geom_line(linewidth = 0.9) +
   geom_point(size = 2.5) +
-  facet_grid(. ~ `Nominal coverage`) +
+  facet_grid(Rule ~ `Nominal coverage`) +
   scale_colour_manual(
     name = "Forecasting method",
     values = method_palette,
@@ -857,7 +895,7 @@ fertility_interval_score_ratio_plot <- ggplot(
 
 fertility_weighted_interval_score_ratio_data <- wis_ratios |>
   filter(
-    Country == "France",
+    Country == "England and Wales",
     Method != "Benchmark (FARFIMA(1,1,0))"
   )
 
@@ -880,6 +918,7 @@ fertility_weighted_interval_score_ratio_plot <- ggplot(
   ) +
   geom_line(linewidth = 0.9) +
   geom_point(size = 2.5) +
+  facet_wrap(~ Rule, nrow = 1) +
   scale_colour_manual(
     name = "Forecasting method",
     values = method_palette,
@@ -910,25 +949,22 @@ fertility_interval_score_ratio_plot
 fertility_weighted_interval_score_ratio_plot
 
 fertility_ratio_exports <- list(
-  France_fertility_point_forecast_ratios = fertility_point_ratio_plot,
-  France_fertility_interval_score_ratios = fertility_interval_score_ratio_plot,
-  France_fertility_weighted_interval_score_ratios = fertility_weighted_interval_score_ratio_plot
+  England_Wales_fertility_point_forecast_ratios = fertility_point_ratio_plot,
+  England_Wales_fertility_interval_score_ratios = fertility_interval_score_ratio_plot,
+  England_Wales_fertility_weighted_interval_score_ratios = fertility_weighted_interval_score_ratio_plot
 )
 
-for (file_stem in names(fertility_ratio_exports)) {
-  for (plot_directory in c(
-    "Empirical Study/Empirical Plots",
-    "Empirical Study/Thesis Draft/Figures/Empirical"
-  )) {
-    ggsave(
-      filename = file.path(plot_directory, paste0(file_stem, ".pdf")),
-      plot = fertility_ratio_exports[[file_stem]],
-      width = 12,
-      height = 6,
-      dpi = 1200,
-      bg = "white"
-    )
-  }
+fertility_ratio_heights <- c(6, 10, 5.5)
+
+for (i in seq_along(fertility_ratio_exports)) {
+  ggsave(
+    filename = file.path("Empirical Study/Empirical Plots", paste0(names(fertility_ratio_exports)[i], ".pdf")),
+    plot = fertility_ratio_exports[[i]],
+    width = 12,
+    height = fertility_ratio_heights[i],
+    dpi = 1200,
+    bg = "white"
+  )
 }
 ```
 
@@ -936,8 +972,8 @@ for (file_stem in names(fertility_ratio_exports)) {
 
 ```{r interval-table}
 fertility_interval_table <- interval_metrics |>
-  filter(Country == "France") |>
-  group_by(Country, alpha, h) |>
+  filter(Country == "England and Wales") |>
+  group_by(Country, Rule, alpha, h) |>
   mutate(
     CPD = format_best_html(CPD, "red"),
     Score = format_best_html(Score, "blue")
@@ -954,6 +990,7 @@ fertility_interval_table <- interval_metrics |>
   ) |>
   dplyr::select(
     Country,
+    Rule,
     `Interval level`,
     h,
     Method,
@@ -966,18 +1003,18 @@ fertility_interval_table <- interval_metrics |>
     values_from = c(ECP, CPD, Score),
     names_glue = "{.value}_{Method}"
   ) |>
-  arrange(Country, h, desc(`Interval level`)) |>
-  group_by(Country, h) |>
+  arrange(Country, Rule, h, desc(`Interval level`)) |>
+  group_by(Country, Rule, h) |>
   mutate(h = if_else(row_number() == 1, as.character(h), "")) |>
   ungroup() |>
-  dplyr::select(Country, h, `Interval level`, everything())
+  dplyr::select(Country, Rule, h, `Interval level`, everything())
 
 fertility_interval_kable <- fertility_interval_table |>
   kable(
     format = "html",
     escape = FALSE,
     col.names = c(
-      "Country", "h", "CP",
+      "Country", "CP method", "h", "CP",
       "Bench.", "IC", "CV",
       "Bench.", "IC", "CV",
       "Bench.", "IC", "CV"
@@ -985,7 +1022,7 @@ fertility_interval_kable <- fertility_interval_table |>
     caption = "Fertility interval performance over all ten horizons"
   ) |>
   kableExtra::add_header_above(
-    c(" " = 3, "ECP" = 3, "CPD" = 3, "Score" = 3)
+    c(" " = 4, "ECP" = 3, "CPD" = 3, "Score" = 3)
   )
 
 for (row_now in seq(2, nrow(fertility_interval_table), by = 2)) {
@@ -999,8 +1036,8 @@ for (row_now in seq(2, nrow(fertility_interval_table), by = 2)) {
 kableExtra::scroll_box(fertility_interval_kable, width = "100%")
 
 fertility_wis_table <- wis_metrics |>
-  filter(Country == "France") |>
-  group_by(h) |>
+  filter(Country == "England and Wales") |>
+  group_by(Rule, h) |>
   mutate(WIS = format_best_html(WIS, "purple")) |>
   ungroup() |>
   mutate(
@@ -1010,22 +1047,22 @@ fertility_wis_table <- wis_metrics |>
     ),
     Method = factor(Method, levels = c("FARFIMA(1,1,0)", "Functional IC", "CV"))
   ) |>
-  dplyr::select(Method, h, WIS) |>
+  dplyr::select(Rule, Method, h, WIS) |>
   pivot_wider(names_from = h, values_from = WIS) |>
-  arrange(Method)
+  arrange(Rule, Method)
 
 fertility_wis_table |>
   kable(
     format = "html",
     escape = FALSE,
-    col.names = c("Method", paste0("h = ", 1:10)),
-    caption = "Weighted interval score for French incremental fertility rate"
+    col.names = c("CP method", "Method", paste0("h = ", 1:10)),
+    caption = "Weighted interval score for Box-Cox transformed fertility rates in England and Wales"
   )
 ```
 
 ```{r coverage-plot, fig.width=12, fig.height=7}
 coverage_plot_data <- interval_metrics |>
-  filter(Country == "France") |>
+  filter(Country == "England and Wales") |>
   mutate(
     `Interval level` = factor(
       scales::percent(1 - alpha, accuracy = 1),
@@ -1045,7 +1082,7 @@ fertility_coverage_plot <- ggplot(
   ) +
   geom_line(linewidth = 0.9) +
   geom_point(size = 2.4) +
-  facet_grid(. ~ `Interval level`) +
+  facet_grid(Rule ~ `Interval level`) +
   scale_colour_manual(
     name = "Forecasting method",
     values = method_palette,
@@ -1082,19 +1119,10 @@ fertility_coverage_plot <- ggplot(
 fertility_coverage_plot
 
 ggsave(
-  "Empirical Study/Empirical Plots/France_fertility_ecp.pdf",
+  "Empirical Study/Empirical Plots/England_Wales_fertility_ecp.pdf",
   fertility_coverage_plot,
   width = 12,
-  height = 5.5,
-  dpi = 1200,
-  bg = "white"
-)
-
-ggsave(
-  "Empirical Study/Thesis Draft/Figures/Empirical/France_fertility_ecp.pdf",
-  fertility_coverage_plot,
-  width = 12,
-  height = 5.5,
+  height = 10,
   dpi = 1200,
   bg = "white"
 )
@@ -1107,7 +1135,7 @@ ggplot(
 ) +
   geom_line(linewidth = 0.9) +
   geom_point(size = 2.4) +
-  facet_grid(Country ~ `Interval level`, scales = "free_y") +
+  facet_grid(Rule ~ `Interval level`, scales = "free_y") +
   scale_colour_manual(values = method_palette, drop = FALSE) +
   scale_shape_manual(values = method_shapes, drop = FALSE) +
   scale_linetype_manual(values = method_linetypes, drop = FALSE) +
@@ -1121,8 +1149,6 @@ ggplot(
 ```
 
 ### Forecast plot
-
-The final comparison uses the most recent test origin for which all ten forecast horizons are observed. The 80% and 95% bands are shown in separate figures to avoid overlapping the two coverage levels. Within every panel, the observed curve, all three point forecasts, and the bands for all three methods are compared directly.
 
 ```{r forecast-band-functions}
 extract_forecast_bands <- function(result, x, observed_x, country, alpha_show = c(0.20, 0.05)) {
@@ -1202,8 +1228,8 @@ forecast_band_list <- list()
 for (country in names(forecast_results)) {
   forecast_band_list[[country]] <- extract_forecast_bands(
     result = forecast_results[[country]],
-    x = fertility_data[[country]]$smooth_change,
-    observed_x = fertility_data[[country]]$raw_change,
+    x = fertility_data[[country]]$smooth,
+    observed_x = fertility_data[[country]]$raw,
     country = country
   )
 }
@@ -1301,7 +1327,7 @@ for (country_now in names(fertility_data)) {
       ) +
       labs(
         x = "Age",
-        y = "Increment fertility-rate"
+        y = "Box-Cox transformed fertility rate"
       ) +
       theme(
         legend.position = "top",
@@ -1316,8 +1342,7 @@ for (country_now in names(fertility_data)) {
         "Empirical Study",
         "Empirical Plots",
         paste0(
-          country_now,
-          "_fertility_increment_forecasts_",
+          "England_Wales_fertility_forecasts_",
           sub("%", "", interval_now),
           ".pdf"
         )
@@ -1369,7 +1394,7 @@ france_smoothed <- demography::smooth.demogdata(
   weight = TRUE
 )
 
-keep_years <- france_demogdata$year >= 1861
+keep_years <- france_demogdata$year >= 1901
 
 mortality_data <- list(
   years = france_demogdata$year[keep_years],
@@ -1472,7 +1497,7 @@ savepdf(
 france_female_identification <- fdaACF::obtain_FACF(
   t(mortality_series$Female),
   v = 0:95,
-  nlags = 20,
+  nlags = 40,
   ci = 0.95,
   estimation = "MC",
   figure = FALSE
@@ -1507,7 +1532,7 @@ savepdf(
 france_male_identification <- fdaACF::obtain_FACF(
   t(mortality_series$Male),
   v = 0:95,
-  nlags = 20,
+  nlags = 40,
   ci = 0.95,
   estimation = "MC",
   figure = FALSE
@@ -1534,29 +1559,7 @@ dev.off()
 ```
 
 
-## Stationarity checks
-
-The null hypothesis of `ftsa::T_stationary()` is that the functional time series is stationary. The checks below use all 163 smoothed log-mortality curves and are descriptive; the forecast pipeline still estimates its parameters from the initial training sample only.
-
-```{r mortality-stationarity-tests}
-for (sex in names(mortality_series)) {
-  cat("\n", sex, " mortality\n", sep = "")
-
-  set.seed(123)
-  ftsa::T_stationary(
-    sample = mortality_series[[sex]],
-    cumulative_var = 0.95,
-    J = 100,
-    MC_rep = 5000,
-    h = sqrt(ncol(mortality_series[[sex]])),
-    pivotal = TRUE
-  )
-}
-```
-
 ## France mortality expanding-window forecast study
-
-The smoothed log-mortality matrices are passed directly to `rolling_forecasting_pipeline_compact_order_method()`. The function creates the 70% training, 15% validation, and 15% test samples internally; no mortality curves are split manually in this Rmd. Point forecast errors are evaluated against the corresponding raw log-mortality curves. The remaining settings are \(h=1,\ldots,10\), `p_max = q_max = 5`, `Npc = 1`, `B = 399`, an expanding window, and central 80% and 95% conformal intervals.
 
 ```{r mortality-run-models}
 dir.create("Empirical Study/results", showWarnings = FALSE, recursive = TRUE)
@@ -1572,18 +1575,19 @@ for (sex in names(mortality_series)) {
   if (!params$rerun_models && file.exists(result_path)) {
     result <- readRDS(result_path)
   } else {
-    result <- rolling_forecasting_pipeline_compact_order_method(
+    result <- unified_pipeline(
       X = mortality_series[[sex]],
+      X_eval = mortality_raw_series[[sex]],
       h_max = 10,
-      train_ratio = 0.70,
-      valid_ratio = 0.15,
+      train_ratio = 0.6,
+      valid_ratio = 0.2,
       alpha_set = c(0.2, 0.05),
       window_types = "expanding",
       p_max = 5,
       q_max = 5,
       Npc = 1,
       B = 399,
-      m_const = 0.65,
+      m_const = 0.75,
       far_pve = 0.95,
       fracdiff_trim = 20,
       seed = 123,
@@ -1675,12 +1679,19 @@ for (sex in names(mortality_forecast_results)) {
     fitted_data = mortality_series[[sex]],
     observed_data = mortality_raw_series[[sex]]
   )
-  interval <- summarise_interval_metrics(
+  interval <- summarise_interval_metrics_by_rule(
     result,
     fitted_data = mortality_series[[sex]],
     observed_data = mortality_raw_series[[sex]]
-  )
-  wis <- summarise_wis(point, interval)
+  ) |>
+    mutate(Rule = factor(recode(as.character(Rule), grid_sd = "SR", scores = "NS", aci = "AC"), levels = c("SR", "NS", "AC"))) |>
+    dplyr::select(Rule, Method, alpha, h, ECP, CPD, Score)
+  wis <- bind_rows(
+    summarise_wis(point, interval |> filter(Rule == "SR")) |> mutate(Rule = "SR", .before = 1),
+    summarise_wis(point, interval |> filter(Rule == "NS")) |> mutate(Rule = "NS", .before = 1),
+    summarise_wis(point, interval |> filter(Rule == "AC")) |> mutate(Rule = "AC", .before = 1)
+  ) |>
+    mutate(Rule = factor(Rule, levels = c("SR", "NS", "AC")))
 
   mortality_metric_results[[sex]] <- list(
     point = point,
@@ -1726,8 +1737,8 @@ mortality_interval_ratios <- mortality_interval_metrics |>
   left_join(
     mortality_interval_metrics |>
       filter(Method == "Benchmark (FARFIMA(1,1,0))") |>
-      dplyr::select(Sex, alpha, h, benchmark_Score = Score),
-    by = c("Sex", "alpha", "h")
+      dplyr::select(Sex, Rule, alpha, h, benchmark_Score = Score),
+    by = c("Sex", "Rule", "alpha", "h")
   ) |>
   mutate(`Score ratio` = Score / benchmark_Score)
 
@@ -1735,8 +1746,8 @@ mortality_wis_ratios <- mortality_wis_metrics |>
   left_join(
     mortality_wis_metrics |>
       filter(Method == "Benchmark (FARFIMA(1,1,0))") |>
-      dplyr::select(Sex, h, benchmark_WIS = WIS),
-    by = c("Sex", "h")
+      dplyr::select(Sex, Rule, h, benchmark_WIS = WIS),
+    by = c("Sex", "Rule", "h")
   ) |>
   mutate(`WIS ratio` = WIS / benchmark_WIS)
 ```
@@ -1779,6 +1790,21 @@ mortality_point_metrics |>
 ```
 
 ```{r mortality-ratio-plots, fig.width=12, fig.height=7.5}
+mortality_column_labels <- c(`Female 80%` = "80%", `Female 95%` = "95%", `Male 80%` = "80%", `Male 95%` = "95%")
+
+merge_sex_strips <- function(p) {
+  g <- ggplotGrob(p)
+  strips <- g$layout[grepl("^strip-t", g$layout$name), ]
+  strips <- strips[order(strips$l), ]
+  top <- strips$t[1]
+  g <- gtable::gtable_add_rows(g, g$heights[top], pos = top - 1)
+  for (k in 1:2) {
+    sex_strip <- ggplotGrob(ggplot(data.frame(x = 1, s = c("Female", "Male")[k]), aes(x, x)) + facet_wrap(~ s))
+    g <- gtable::gtable_add_grob(g, sex_strip$grobs[[grep("^strip-t", sex_strip$layout$name)]], t = top, l = strips$l[2 * k - 1], r = strips$r[2 * k], name = paste0("strip-sex-", k))
+  }
+  g
+}
+
 mortality_point_ratio_data <- mortality_point_ratios |>
   filter(Method != "Benchmark (FARFIMA(1,1,0))") |>
   dplyr::select(Sex, Method, h, `RMSPE ratio`, `MAPE ratio`) |>
@@ -1845,12 +1871,14 @@ mortality_interval_score_ratio_data <- mortality_interval_ratios |>
   filter(Method != "Benchmark (FARFIMA(1,1,0))") |>
   transmute(
     Sex,
+    Rule,
     Method,
     h,
     `Nominal coverage` = factor(
       scales::percent(1 - alpha, accuracy = 1),
       levels = c("80%", "95%")
     ),
+    Column = factor(paste(Sex, `Nominal coverage`), levels = names(mortality_column_labels)),
     Ratio = `Score ratio`
   )
 
@@ -1873,7 +1901,7 @@ mortality_interval_score_ratio_plot <- ggplot(
   ) +
   geom_line(linewidth = 0.9) +
   geom_point(size = 2.5) +
-  facet_grid(Sex ~ `Nominal coverage`) +
+  facet_grid(Rule ~ Column, labeller = labeller(Column = mortality_column_labels)) +
   scale_colour_manual(
     name = "Forecasting method",
     values = method_palette,
@@ -1927,7 +1955,7 @@ mortality_weighted_interval_score_ratio_plot <- ggplot(
   ) +
   geom_line(linewidth = 0.9) +
   geom_point(size = 2.5) +
-  facet_wrap(~ Sex, nrow = 1) +
+  facet_grid(Sex ~ Rule) +
   scale_colour_manual(
     name = "Forecasting method",
     values = method_palette,
@@ -1954,29 +1982,27 @@ mortality_weighted_interval_score_ratio_plot <- ggplot(
   )
 
 mortality_point_ratio_plot
-mortality_interval_score_ratio_plot
+grid::grid.newpage()
+grid::grid.draw(merge_sex_strips(mortality_interval_score_ratio_plot))
 mortality_weighted_interval_score_ratio_plot
 
 mortality_ratio_exports <- list(
   France_mortality_point_forecast_ratios = mortality_point_ratio_plot,
-  France_mortality_interval_score_ratios = mortality_interval_score_ratio_plot,
+  France_mortality_interval_score_ratios = merge_sex_strips(mortality_interval_score_ratio_plot),
   France_mortality_weighted_interval_score_ratios = mortality_weighted_interval_score_ratio_plot
 )
 
-for (file_stem in names(mortality_ratio_exports)) {
-  for (plot_directory in c(
-    "Empirical Study/Empirical Plots",
-    "Empirical Study/Thesis Draft/Figures/Empirical"
-  )) {
-    ggsave(
-      filename = file.path(plot_directory, paste0(file_stem, ".pdf")),
-      plot = mortality_ratio_exports[[file_stem]],
-      width = 12,
-      height = 7.5,
-      dpi = 1200,
-      bg = "white"
-    )
-  }
+mortality_ratio_heights <- c(7.5, 10, 7.5)
+
+for (i in seq_along(mortality_ratio_exports)) {
+  ggsave(
+    filename = file.path("Empirical Study/Empirical Plots", paste0(names(mortality_ratio_exports)[i], ".pdf")),
+    plot = mortality_ratio_exports[[i]],
+    width = 12,
+    height = mortality_ratio_heights[i],
+    dpi = 1200,
+    bg = "white"
+  )
 }
 ```
 
@@ -1984,7 +2010,7 @@ for (file_stem in names(mortality_ratio_exports)) {
 
 ```{r mortality-interval-table}
 mortality_interval_table <- mortality_interval_metrics |>
-  group_by(Sex, alpha, h) |>
+  group_by(Sex, Rule, alpha, h) |>
   mutate(
     CPD = format_best_html(CPD, "red"),
     Score = format_best_html(Score, "blue")
@@ -2001,6 +2027,7 @@ mortality_interval_table <- mortality_interval_metrics |>
   ) |>
   dplyr::select(
     Sex,
+    Rule,
     `Interval level`,
     h,
     Method,
@@ -2013,18 +2040,18 @@ mortality_interval_table <- mortality_interval_metrics |>
     values_from = c(ECP, CPD, Score),
     names_glue = "{.value}_{Method}"
   ) |>
-  arrange(Sex, h, desc(`Interval level`)) |>
-  group_by(Sex, h) |>
+  arrange(Sex, Rule, h, desc(`Interval level`)) |>
+  group_by(Sex, Rule, h) |>
   mutate(h = if_else(row_number() == 1, as.character(h), "")) |>
   ungroup() |>
-  dplyr::select(Sex, h, `Interval level`, everything())
+  dplyr::select(Sex, Rule, h, `Interval level`, everything())
 
 mortality_interval_kable <- mortality_interval_table |>
   kable(
     format = "html",
     escape = FALSE,
     col.names = c(
-      "Sex", "h", "CP",
+      "Sex", "CP method", "h", "CP",
       "Bench.", "IC", "CV",
       "Bench.", "IC", "CV",
       "Bench.", "IC", "CV"
@@ -2032,7 +2059,7 @@ mortality_interval_kable <- mortality_interval_table |>
     caption = "France mortality interval performance over all ten horizons"
   ) |>
   kableExtra::add_header_above(
-    c(" " = 3, "ECP" = 3, "CPD" = 3, "Score" = 3)
+    c(" " = 4, "ECP" = 3, "CPD" = 3, "Score" = 3)
   )
 
 for (row_now in seq(2, nrow(mortality_interval_table), by = 2)) {
@@ -2050,7 +2077,7 @@ mortality_wis_tables <- list()
 for (sex_now in c("Female", "Male")) {
   mortality_wis_tables[[sex_now]] <- mortality_wis_metrics |>
     filter(Sex == sex_now) |>
-    group_by(h) |>
+    group_by(Rule, h) |>
     mutate(WIS = format_best_html(WIS, "purple")) |>
     ungroup() |>
     mutate(
@@ -2060,16 +2087,16 @@ for (sex_now in c("Female", "Male")) {
       ),
       Method = factor(Method, levels = c("FARFIMA(1,1,0)", "Functional IC", "CV"))
     ) |>
-    dplyr::select(Method, h, WIS) |>
+    dplyr::select(Rule, Method, h, WIS) |>
     pivot_wider(names_from = h, values_from = WIS) |>
-    arrange(Method)
+    arrange(Rule, Method)
 
   print(
     mortality_wis_tables[[sex_now]] |>
       kable(
         format = "html",
         escape = FALSE,
-        col.names = c("Method", paste0("h = ", 1:10)),
+        col.names = c("CP method", "Method", paste0("h = ", 1:10)),
         caption = paste(
           "Weighted interval score for French",
           tolower(sex_now),
@@ -2086,7 +2113,8 @@ mortality_coverage_plot_data <- mortality_interval_metrics |>
     `Interval level` = factor(
       scales::percent(1 - alpha, accuracy = 1),
       levels = c("80%", "95%")
-    )
+    ),
+    Column = factor(paste(Sex, `Interval level`), levels = names(mortality_column_labels))
   )
 
 mortality_coverage_plot <- ggplot(
@@ -2101,7 +2129,7 @@ mortality_coverage_plot <- ggplot(
   ) +
   geom_line(linewidth = 0.9) +
   geom_point(size = 2.4) +
-  facet_grid(Sex ~ `Interval level`) +
+  facet_grid(Rule ~ Column, labeller = labeller(Column = mortality_column_labels)) +
   scale_colour_manual(
     name = "Forecasting method",
     values = method_palette,
@@ -2135,30 +2163,20 @@ mortality_coverage_plot <- ggplot(
     legend.box = "horizontal"
   )
 
-mortality_coverage_plot
+grid::grid.newpage()
+grid::grid.draw(merge_sex_strips(mortality_coverage_plot))
 
 ggsave(
   "Empirical Study/Empirical Plots/France_mortality_ecp.pdf",
-  mortality_coverage_plot,
+  merge_sex_strips(mortality_coverage_plot),
   width = 12,
-  height = 7.5,
-  dpi = 1200,
-  bg = "white"
-)
-
-ggsave(
-  "Empirical Study/Thesis Draft/Figures/Empirical/France_mortality_ecp.pdf",
-  mortality_coverage_plot,
-  width = 12,
-  height = 7.5,
+  height = 10,
   dpi = 1200,
   bg = "white"
 )
 ```
 
 ### France mortality point and interval forecasts
-
-The figures use the latest test origin for which all ten horizons are observed. Each panel compares the raw observed log-mortality curve with the three point forecasts fitted to smoothed log mortality. The method-specific 80% and 95% bands are shown in separate figures.
 
 ```{r mortality-forecast-band-data}
 mortality_forecast_band_list <- list()
@@ -2282,4 +2300,269 @@ for (sex_now in names(mortality_forecast_results)) {
     )
   }
 }
+```
+
+# Comparing the interval calibration rules
+
+```{r calibration-rule-comparison}
+rule_metrics <- bind_rows(
+  summarise_interval_metrics_by_rule(
+    forecast_results[["England and Wales"]],
+    fitted_data = fertility_data[["England and Wales"]]$smooth,
+    observed_data = fertility_data[["England and Wales"]]$raw
+  ) |>
+    mutate(Dataset = "Fertility", .before = 1),
+  bind_rows(lapply(names(mortality_forecast_results), function(sex_now) {
+    summarise_interval_metrics_by_rule(
+      mortality_forecast_results[[sex_now]],
+      fitted_data = mortality_series[[sex_now]],
+      observed_data = mortality_raw_series[[sex_now]]
+    ) |>
+      mutate(Dataset = paste("Mortality", sex_now), .before = 1)
+  }))
+) |>
+  mutate(
+    Dataset = factor(
+      Dataset,
+      levels = c("Fertility", "Mortality Female", "Mortality Male")
+    )
+  )
+
+rule_labels <- c("Scaled residual", "Nonconformity", "ACI")
+
+rule_comparison_table <- rule_metrics |>
+  group_by(Dataset, Method, alpha, Rule) |>
+  summarise(
+    ECP = sum(covered) / sum(n),
+    Score = sum(score_sum) / sum(n),
+    .groups = "drop"
+  ) |>
+  mutate(CPD = abs(ECP - (1 - alpha))) |>
+  pivot_wider(
+    names_from = Rule,
+    values_from = c(ECP, CPD, Score),
+    names_glue = "{.value}_{Rule}"
+  ) |>
+  mutate(
+    `Interval level` = scales::percent(1 - alpha, accuracy = 1),
+    Method = recode(
+      as.character(Method),
+      `Benchmark (FARFIMA(1,1,0))` = "Benchmark"
+    ),
+    Method = factor(Method, levels = c("Benchmark", "Functional IC", "CV")),
+    across(starts_with(c("ECP_", "CPD_", "Score_")), ~ sprintf("%.4f", .))
+  ) |>
+  arrange(Dataset, desc(`Interval level`), Method) |>
+  dplyr::select(
+    Dataset,
+    `Interval level`,
+    Method,
+    ECP_grid_sd, ECP_scores, ECP_aci,
+    CPD_grid_sd, CPD_scores, CPD_aci,
+    Score_grid_sd, Score_scores, Score_aci
+  )
+
+rule_comparison_table |>
+  kable(
+    format = "html",
+    escape = FALSE,
+    col.names = c("Dataset", "CP", "Method", rep(rule_labels, 3)),
+    caption = paste(
+      "Interval performance under the scaled residual band, nonconformity",
+      "score and adaptive conformal rules, pooled over the ten forecast horizons"
+    )
+  ) |>
+  kableExtra::add_header_above(
+    c(" " = 3, "ECP" = 3, "CPD" = 3, "Score" = 3)
+  ) |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r calibration-rule-eta}
+calibration_all <- bind_rows(
+  forecast_results[["England and Wales"]]$calibration_detail |>
+    attach_method() |>
+    mutate(Dataset = "Fertility"),
+  bind_rows(lapply(names(mortality_forecast_results), function(sex_now) {
+    mortality_forecast_results[[sex_now]]$calibration_detail |>
+      attach_method() |>
+      mutate(Dataset = paste("Mortality", sex_now))
+  }))
+)
+
+calibration_all |>
+  distinct(Dataset, Method, alpha, aci_eta) |>
+  mutate(
+    `Interval level` = scales::percent(1 - alpha, accuracy = 1),
+    Method = recode(
+      as.character(Method),
+      `Benchmark (FARFIMA(1,1,0))` = "Benchmark"
+    ),
+    Method = factor(Method, levels = c("Benchmark", "Functional IC", "CV"))
+  ) |>
+  dplyr::select(Dataset, Method, `Interval level`, aci_eta) |>
+  pivot_wider(names_from = `Interval level`, values_from = aci_eta) |>
+  arrange(Dataset, Method) |>
+  kable(
+    format = "html",
+    caption = "ACI learning rate selected on the validation period"
+  ) |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r calibration-rule-by-horizon}
+rule_metrics |>
+  filter(Method == "Functional IC") |>
+  mutate(`Interval level` = scales::percent(1 - alpha, accuracy = 1)) |>
+  dplyr::select(Dataset, `Interval level`, h, Rule, ECP, Score) |>
+  pivot_wider(
+    names_from = Rule,
+    values_from = c(ECP, Score),
+    names_glue = "{.value}_{Rule}"
+  ) |>
+  arrange(Dataset, desc(`Interval level`), h) |>
+  mutate(across(starts_with(c("ECP_", "Score_")), ~ sprintf("%.4f", .))) |>
+  dplyr::select(
+    Dataset, `Interval level`, h,
+    ECP_grid_sd, ECP_scores, ECP_aci,
+    Score_grid_sd, Score_scores, Score_aci
+  ) |>
+  kable(
+    format = "html",
+    col.names = c("Dataset", "CP", "h", rep(rule_labels, 2)),
+    caption = "Functional IC interval performance by horizon under the three rules"
+  ) |>
+  kableExtra::add_header_above(c(" " = 3, "ECP" = 3, "Score" = 3)) |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r calibration-rule-agreement}
+multiplier_ratio <- unlist(lapply(seq_len(nrow(calibration_all)), function(i) {
+  (1 + 2 * calibration_all$Q_hat[[i]]) / calibration_all$zeta[[i]]
+}))
+
+rule_gap <- rule_metrics |>
+  filter(Rule %in% c("grid_sd", "scores")) |>
+  dplyr::select(Dataset, Method, alpha, h, Rule, ECP, Score) |>
+  pivot_wider(names_from = Rule, values_from = c(ECP, Score)) |>
+  mutate(
+    ECP_gap = ECP_scores - ECP_grid_sd,
+    Score_gap = Score_scores - Score_grid_sd
+  )
+
+tibble(
+  Quantity = c(
+    "cells compared",
+    "multiplier ratio (1 + 2Q) / zeta, median",
+    "multiplier ratio (1 + 2Q) / zeta, range",
+    "max |ECP difference|",
+    "max |Score difference|",
+    "mean |Score difference|"
+  ),
+  Value = c(
+    format(nrow(rule_gap)),
+    sprintf("%.4f", median(multiplier_ratio, na.rm = TRUE)),
+    sprintf(
+      "%.4f to %.4f",
+      min(multiplier_ratio, na.rm = TRUE),
+      max(multiplier_ratio, na.rm = TRUE)
+    ),
+    sprintf("%.4f", max(abs(rule_gap$ECP_gap), na.rm = TRUE)),
+    sprintf("%.4f", max(abs(rule_gap$Score_gap), na.rm = TRUE)),
+    sprintf("%.6f", mean(abs(rule_gap$Score_gap), na.rm = TRUE))
+  )
+) |>
+  kable(
+    format = "html",
+    caption = paste(
+      "Agreement between the scaled residual band and nonconformity",
+      "score calibration rules"
+    )
+  ) |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r calibration-rule-ecp-plot, fig.width=12, fig.height=10}
+rule_coverage_plot_data <- rule_metrics |>
+  mutate(
+    `Interval level` = factor(
+      ifelse(alpha == 0.2, "80%", "95%"),
+      levels = c("80%", "95%")
+    )
+  )
+
+rule_coverage_plot <- ggplot(
+  rule_coverage_plot_data,
+  aes(
+    h, ECP,
+    colour = Method,
+    shape = Rule,
+    linetype = Rule,
+    group = interaction(Method, Rule)
+  )
+) +
+  geom_hline(
+    aes(yintercept = 1 - alpha),
+    colour = "#333333",
+    linetype = "dashed",
+    linewidth = 1
+  ) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2.6, stroke = 1) +
+  facet_grid(Dataset ~ `Interval level`) +
+  scale_colour_manual(
+    name = "Forecasting method",
+    values = method_palette,
+    labels = method_plot_labels,
+    drop = FALSE
+  ) +
+  scale_shape_manual(
+    name = "Calibration rule",
+    values = c(grid_sd = 16, scores = 1, aci = 17),
+    labels = c(
+      grid_sd = "Scaled residual band",
+      scores = "Nonconformity score",
+      aci = "Adaptive conformal"
+    )
+  ) +
+  scale_linetype_manual(
+    name = "Calibration rule",
+    values = c(grid_sd = "solid", scores = "22", aci = "4212"),
+    labels = c(
+      grid_sd = "Scaled residual band",
+      scores = "Nonconformity score",
+      aci = "Adaptive conformal"
+    )
+  ) +
+  scale_x_continuous(breaks = 1:10) +
+  scale_y_continuous(
+    breaks = seq(0.50, 1.00, by = 0.05),
+    labels = scales::number_format(accuracy = 0.01)
+  ) +
+  coord_cartesian(ylim = c(0.50, 1.00)) +
+  labs(
+    x = "Forecast horizon h",
+    y = "ECP"
+  ) +
+  guides(
+    colour = guide_legend(order = 1, override.aes = list(shape = 16, linetype = "solid")),
+    shape = guide_legend(order = 2, override.aes = list(colour = "#333333")),
+    linetype = guide_legend(order = 2, override.aes = list(colour = "#333333"))
+  ) +
+  theme(
+    legend.position = "top",
+    legend.box = "vertical",
+    legend.box.just = "left"
+  )
+
+rule_coverage_plot
+
+ggsave(
+  "Empirical Study/Empirical Plots/Empirical_ecp_calibration_rules.pdf",
+  rule_coverage_plot,
+  width = 12,
+  height = 10,
+  dpi = 1200,
+  bg = "white"
+)
 ```

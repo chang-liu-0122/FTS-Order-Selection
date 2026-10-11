@@ -90,16 +90,16 @@ df_raw_line_FAR <- result_d_FAR_comparison %>%
       str_detect(variable, "peng") ~ "DFA"
     ),
     operator = case_when(
-      str_detect(variable, "^sample") ~ "Sample",
-      str_detect(variable, "^lrc_RS") ~ "LRC-RS",
-      str_detect(variable, "^lrc_LRS") ~ "LRC-LRS"
+      str_detect(variable, "^sample") ~ "Covar",
+      str_detect(variable, "^lrc_RS") ~ "RS",
+      str_detect(variable, "^lrc_LRS") ~ "LRS"
     )
   ) %>%
   group_by(T, ar_strength, d_true, estimator, operator) %>%
   summarise(mean_d_est = mean(d_est, na.rm = TRUE), .groups = "drop") %>%
   mutate(
     estimator = factor(estimator, levels = c("Whittle", "DFA")),
-    operator = factor(operator, levels = c("Sample", "LRC-RS", "LRC-LRS")),
+    operator = factor(operator, levels = c("Covar", "RS", "LRS")),
     ar_label = factor(paste0("psi==", ar_strength), levels = paste0("psi==", sort(
       unique(ar_strength)
     ))),
@@ -166,7 +166,7 @@ plot_cov_compare_FAR <- function(df, estimator_keep, title = NULL) {
       d_label = factor(d_label, levels = d_levels),
       operator = factor(
         operator,
-        levels = c("True d", "Sample", "LRC-RS", "LRC-LRS")
+        levels = c("True d", "Covar", "RS", "LRS")
       )
     )
   
@@ -187,25 +187,25 @@ plot_cov_compare_FAR <- function(df, estimator_keep, title = NULL) {
     scale_colour_manual(
       values = c(
         "True d" = "red",
-        "Sample" = "black",
-        "LRC-RS" = "black",
-        "LRC-LRS" = "black"
+        "Covar" = "black",
+        "RS" = "black",
+        "LRS" = "black"
       )
     ) +
     scale_linetype_manual(
       values = c(
         "True d" = "dashed",
-        "Sample" = "solid",
-        "LRC-RS" = "dashed",
-        "LRC-LRS" = "dotted"
+        "Covar" = "solid",
+        "RS" = "dashed",
+        "LRS" = "dotted"
       )
     ) +
     scale_shape_manual(
       values = c(
         "True d" = 4,
-        "Sample" = 16,
-        "LRC-RS" = 17,
-        "LRC-LRS" = 15
+        "Covar" = 16,
+        "RS" = 17,
+        "LRS" = 15
       )
     ) +
     scale_x_discrete(labels = function(x) sub("^T==", "", x)) +
@@ -223,80 +223,6 @@ plot_cov_compare_FAR <- function(df, estimator_keep, title = NULL) {
       axis.text.x = element_text(angle = 0, hjust = 0.5)
     )
 }
-
-combine_memory_estimators <- function(p_lw,
-                                      p_dfa,
-                                      file_name,
-                                      width = 10,
-                                      height = 11) {
-  shared_legend <- get_visible_legend(
-    p_lw +
-      theme(
-        legend.position = "top",
-        legend.box = "horizontal"
-      )
-  )
-
-  p_lw_panel <- p_lw +
-    labs(x = NULL, y = NULL) +
-    theme(
-      legend.position = "none",
-      axis.text.x = element_blank(),
-      axis.ticks.x = element_blank()
-    )
-
-  p_dfa_panel <- p_dfa +
-    labs(x = NULL, y = NULL) +
-    theme(legend.position = "none")
-
-  panels <- cowplot::plot_grid(
-    p_lw_panel,
-    p_dfa_panel,
-    ncol = 1,
-    align = "v",
-    axis = "lr"
-  )
-
-  panels_with_axes <- cowplot::ggdraw() +
-    cowplot::draw_plot(
-      panels,
-      x = 0.085,
-      y = 0.075,
-      width = 0.905,
-      height = 0.90
-    ) +
-    cowplot::draw_label(
-      expression("Mean estimated memory parameter " * hat(d)),
-      x = 0.018,
-      y = 0.53,
-      angle = 90,
-      size = 18
-    ) +
-    cowplot::draw_label(
-      "Sample size T",
-      x = 0.54,
-      y = 0.018,
-      size = 18
-    )
-
-  combined <- cowplot::plot_grid(
-    shared_legend,
-    panels_with_axes,
-    ncol = 1,
-    rel_heights = c(0.13, 1)
-  )
-
-  ggsave(
-    file_name,
-    combined,
-    width = width,
-    height = height,
-    dpi = 1200,
-    bg = "white"
-  )
-
-  combined
-}
 ```
 
 
@@ -308,10 +234,22 @@ p_raw_peng_FAR <- plot_cov_compare_FAR(df_raw_line_FAR, estimator_keep = "DFA")
 p_raw_whittle_FAR
 p_raw_peng_FAR
 
-p_cov_lw_dfa_FAR <- combine_memory_estimators(
-  p_lw = p_raw_whittle_FAR,
-  p_dfa = p_raw_peng_FAR,
-  file_name = file.path(memory_plot_dir, "Cov_LW_DFA_FAR.pdf")
+ggsave(
+  file.path(memory_plot_dir, "Cov_LW_FAR.pdf"),
+  p_raw_whittle_FAR,
+  width = 10,
+  height = 7.5,
+  dpi = 1200,
+  bg = "white"
+)
+
+ggsave(
+  file.path(memory_plot_dir, "Cov_DFA_FAR.pdf"),
+  p_raw_peng_FAR,
+  width = 10,
+  height = 7.5,
+  dpi = 1200,
+  bg = "white"
 )
 ```
 
@@ -371,16 +309,16 @@ df_raw_line_FARMA <- covariance_matrix_comparison_FARMA %>%
       grepl("peng", variable) ~ "DFA"
     ),
     operator = case_when(
-      grepl("^sample", variable) ~ "Sample",
-      grepl("^lrc_RS", variable) ~ "LRC-RS",
-      grepl("^lrc_LRS", variable) ~ "LRC-LRS"
+      grepl("^sample", variable) ~ "Covar",
+      grepl("^lrc_RS", variable) ~ "RS",
+      grepl("^lrc_LRS", variable) ~ "LRS"
     )
   ) %>%
   group_by(T, d_true, strength_ar, strength_ma, estimator, operator) %>%
   summarise(mean_d_est = mean(d_est, na.rm = TRUE), .groups = "drop") %>%
   mutate(
     estimator = factor(estimator, levels = c("Whittle", "DFA")),
-    operator = factor(operator, levels = c("Sample", "LRC-RS", "LRC-LRS")),
+    operator = factor(operator, levels = c("Covar", "RS", "LRS")),
     ar_label = factor(paste0("psi==", strength_ar), levels = paste0("psi==", sort(
       unique(strength_ar)
     ))),
@@ -465,7 +403,7 @@ plot_cov_compare_FARMA <- function(df, estimator_keep, ma_keep, title = NULL) {
       d_label = factor(d_label, levels = d_levels),
       operator = factor(
         operator,
-        levels = c("True d", "Sample", "LRC-RS", "LRC-LRS")
+        levels = c("True d", "Covar", "RS", "LRS")
       )
     )
   
@@ -486,25 +424,25 @@ plot_cov_compare_FARMA <- function(df, estimator_keep, ma_keep, title = NULL) {
     scale_colour_manual(
       values = c(
         "True d" = "red",
-        "Sample" = "black",
-        "LRC-RS" = "black",
-        "LRC-LRS" = "black"
+        "Covar" = "black",
+        "RS" = "black",
+        "LRS" = "black"
       )
     ) +
     scale_linetype_manual(
       values = c(
         "True d" = "dashed",
-        "Sample" = "solid",
-        "LRC-RS" = "dashed",
-        "LRC-LRS" = "dotted"
+        "Covar" = "solid",
+        "RS" = "dashed",
+        "LRS" = "dotted"
       )
     ) +
     scale_shape_manual(
       values = c(
         "True d" = 4,
-        "Sample" = 16,
-        "LRC-RS" = 17,
-        "LRC-LRS" = 15
+        "Covar" = 16,
+        "RS" = 17,
+        "LRS" = 15
       )
     ) +
     scale_x_discrete(labels = function(x) sub("^T==", "", x)) +
@@ -563,12 +501,21 @@ p_cov_peng_FARMA_08 <- plot_cov_compare_FARMA(
   ma_keep = 0.8
 )
 
-p_cov_lw_dfa_FARMA_05 <- combine_memory_estimators(
-  p_lw = p_cov_whittle_FARMA_05,
-  p_dfa = p_cov_peng_FARMA_05,
-  file_name = file.path(
-    memory_plot_dir,
-    "Cov_LW_DFA_FARMA_MA_0.5.pdf"
-  )
+ggsave(
+  file.path(memory_plot_dir, "Cov_LW_FARMA_MA_0.5.pdf"),
+  p_cov_whittle_FARMA_05,
+  width = 10,
+  height = 7.5,
+  dpi = 1200,
+  bg = "white"
+)
+
+ggsave(
+  file.path(memory_plot_dir, "Cov_DFA_FARMA_MA_0.5.pdf"),
+  p_cov_peng_FARMA_05,
+  width = 10,
+  height = 7.5,
+  dpi = 1200,
+  bg = "white"
 )
 ```

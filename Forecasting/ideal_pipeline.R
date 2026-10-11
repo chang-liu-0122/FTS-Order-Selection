@@ -1,24 +1,37 @@
-rolling_split_conformal_original_ecp_compact <- function(X,
-                                                         d_hat,
-                                                         d_hat_far = NULL,
-                                                         seed = 1,
-                                                         p_est = 1,
-                                                         q_est = 1,
-                                                         h_max = 10,
-                                                         train_ratio = 0.6,
-                                                         valid_ratio = 0.2,
-                                                         alpha_set = c(0.2, 0.05),
-                                                         method = c("farma", "far", "both"),
-                                                         window_type = c("expanding", "fixed"),
-                                                         Npc = 1,
-                                                         far_pve = 0.95,
-                                                         zeta_grid = seq(0.1, 50, length.out = 2496),
-                                                         fracdiff_trim = 100)
+# Rolling forecasts for given d and (p, q), with SR, NS and AC bands calibrated on validation
+rolling_forecast <- function(X,
+                             d_hat,
+                             d_hat_far = NULL,
+                             seed = 1,
+                             p_est = 1,
+                             q_est = 1,
+                             h_max = 10,
+                             train_ratio = 0.6,
+                             valid_ratio = 0.2,
+                             alpha_set = c(0.2, 0.05),
+                             method = c("farma", "far", "both"),
+                             window_type = c("expanding", "fixed"),
+                             Npc = 1,
+                             far_pve = 0.95,
+                             zeta_grid = seq(0.1, 50, length.out = 2496),
+                             fracdiff_trim = 100,
+                             X_eval = NULL,
+                             farma_residual_ratio_limit = 50,
+                             aci_eta_grid = c(0, 0.005, 0.01, 0.02, 0.05, 0.1))
 {
   method <- match.arg(method)
   window_type <- match.arg(window_type)
 
   X <- as.matrix(X)
+
+  X_eval <- if (is.null(X_eval))
+    X
+  else
+    as.matrix(X_eval)
+
+  if (!identical(dim(X_eval), dim(X))) {
+    stop("X_eval must have the same dimensions as X.")
+  }
 
   if (any(!is.finite(X))) {
     stop("X contains NA, NaN or Inf values.")
@@ -70,6 +83,7 @@ rolling_split_conformal_original_ecp_compact <- function(X,
 
   test_steps <- seq.int(from = valid_end, to = T - 1L)
 
+  # Curves up to origin t0, centred by the window mean
   get_centered_history <- function(t0)
   {
     X_history <- X[, 1:t0, drop = FALSE]
@@ -93,6 +107,7 @@ rolling_split_conformal_original_ecp_compact <- function(X,
     list(X_history_centered = X_history_centered, mean_curve = mean_curve)
   }
 
+  # Differenced history and the trimmed part used for estimation
   make_Y_train <- function(X_history_centered, d_current)
   {
     if (d_current == 0) {
@@ -139,6 +154,15 @@ rolling_split_conformal_original_ecp_compact <- function(X,
     })
   }), methods_used)
 
+  F_valid <- E_valid
+  Y_valid <- E_valid
+
+  V_origin <- setNames(lapply(methods_used, function(m)
+  {
+    lapply(seq_len(h_max), function(h)
+      integer(0))
+  }), methods_used)
+
   # ----------------------------------------------------------
   # Validation forecasts
   # ----------------------------------------------------------
@@ -160,7 +184,7 @@ rolling_split_conformal_original_ecp_compact <- function(X,
     centered_obj <- get_centered_history(t0 = t0)
 
     true_future_mat <-
-      X[, (t0 + 1):(t0 + h_here), drop = FALSE]
+      X_eval[, (t0 + 1):(t0 + h_here), drop = FALSE]
 
     for (m in methods_used)
     {
@@ -182,7 +206,8 @@ rolling_split_conformal_original_ecp_compact <- function(X,
           far_pve = far_pve,
           Y_history_for_integration =
             train_obj$Y_history,
-          return_fit = FALSE
+          return_fit = FALSE,
+          farma_residual_ratio_limit = farma_residual_ratio_limit
         ),
         error = function(e)
           e
@@ -234,6 +259,15 @@ rolling_split_conformal_original_ecp_compact <- function(X,
 
         E_valid[[m]][[h]] <-
           cbind(E_valid[[m]][[h]], e_h)
+
+        F_valid[[m]][[h]] <-
+          cbind(F_valid[[m]][[h]], pred_future_mat[, h])
+
+        Y_valid[[m]][[h]] <-
+          cbind(Y_valid[[m]][[h]], true_future_mat[, h])
+
+        V_origin[[m]][[h]] <-
+          c(V_origin[[m]][[h]], t0)
       }
     }
   }
@@ -245,6 +279,8 @@ rolling_split_conformal_original_ecp_compact <- function(X,
   calibration <- list()
   calibration_list <- list()
 
+  aci_split_origin <- train_end + floor((valid_end - train_end) / 2)
+
   for (m in methods_used)
   {
     calibration[[m]] <- list()
@@ -254,8 +290,13 @@ rolling_split_conformal_original_ecp_compact <- function(X,
       alpha_name <- as.character(alpha)
 
       calibration[[m]][[alpha_name]] <-
-        list(gamma = vector("list", h_max),
-             zeta = rep(NA_real_, h_max))
+        list(
+          gamma = vector("list", h_max),
+          zeta = rep(NA_real_, h_max),
+          Q_hat = rep(NA_real_, h_max),
+          scores_sorted = vector("list", h_max),
+          aci_eta = 0
+        )
 
       for (h in seq_len(h_max))
       {
@@ -277,18 +318,27 @@ rolling_split_conformal_original_ecp_compact <- function(X,
 
         calibration[[m]][[alpha_name]]$zeta[h] <-
           cal$zeta
+
+        calibration[[m]][[alpha_name]]$scores_sorted[[h]] <-
+          conformal_scores(
+            truth = Y_valid[[m]][[h]],
+            forecast = F_valid[[m]][[h]],
+            gamma = cal$gamma
+          )
+
+        calibration[[m]][[alpha_name]]$Q_hat[h] <-
+          conformal_quantile(calibration[[m]][[alpha_name]]$scores_sorted[[h]], alpha)
       }
 
-      calibration_list[[length(calibration_list) + 1]] <-
-        tibble::tibble(
-          seed = seed,
-          window_type = window_type,
-          method = m,
+      calibration[[m]][[alpha_name]]$aci_eta <-
+        aci_select_eta(
+          F_by_h = F_valid[[m]],
+          Y_by_h = Y_valid[[m]],
+          origins_by_h = V_origin[[m]],
+          split_origin = aci_split_origin,
           alpha = alpha,
-          d_used = d_method[[m]],
-          gamma = list(calibration[[m]][[alpha_name]]$gamma),
-          zeta = list(calibration[[m]][[alpha_name]]$zeta)
-        )
+          eta_grid = aci_eta_grid
+        )$eta
     }
   }
 
@@ -301,11 +351,46 @@ rolling_split_conformal_original_ecp_compact <- function(X,
         list(
           cover_count = 0,
           score_sum = 0,
-          n_interval = 0
+          n_interval = 0,
+          cover_scores = 0,
+          score_scores = 0,
+          n_scores = 0,
+          cover_aci = 0,
+          score_aci = 0,
+          n_aci = 0
         )
       })
     }),
     as.character(alpha_set))
+  }), methods_used)
+
+  aci_state <- setNames(lapply(methods_used, function(m)
+  {
+    setNames(lapply(alpha_set, function(alpha)
+    {
+      lapply(seq_len(h_max), function(h)
+      {
+        list(
+          a_t = alpha,
+          origin = integer(0),
+          err = numeric(0),
+          used = logical(0)
+        )
+      })
+    }), as.character(alpha_set))
+  }), methods_used)
+
+  aci_record <- setNames(lapply(methods_used, function(m)
+  {
+    setNames(lapply(alpha_set, function(alpha)
+    {
+      matrix(
+        NA_real_,
+        nrow = length(test_steps),
+        ncol = h_max,
+        dimnames = list(as.character(test_steps), NULL)
+      )
+    }), as.character(alpha_set))
   }), methods_used)
 
   error_curve_list <- list()
@@ -350,7 +435,8 @@ rolling_split_conformal_original_ecp_compact <- function(X,
           far_pve = far_pve,
           Y_history_for_integration =
             train_obj$Y_history,
-          return_fit = FALSE
+          return_fit = FALSE,
+          farma_residual_ratio_limit = farma_residual_ratio_limit
         ),
         error = function(e)
           e
@@ -399,6 +485,7 @@ rolling_split_conformal_original_ecp_compact <- function(X,
         pred_future_mat -
         true_future_mat
 
+
       error_curve_list[[length(error_curve_list) + 1]] <-
         tibble::tibble(
           seed = seed,
@@ -416,6 +503,76 @@ rolling_split_conformal_original_ecp_compact <- function(X,
 
         for (h in seq_len(h_here))
         {
+          rule_gamma_h <-
+            as.numeric(calibration[[m]][[alpha_name]]$gamma[[h]])
+          rule_f_h <- as.numeric(pred_future_mat[, h])
+          rule_y_h <- as.numeric(true_future_mat[, h])
+
+          if (length(rule_gamma_h) == length(rule_f_h)) {
+            rule_accum <- conformal_accum[[m]][[alpha_name]][[h]]
+
+            band_s <- conformal_interval(
+              forecast = rule_f_h,
+              gamma = rule_gamma_h,
+              Q = calibration[[m]][[alpha_name]]$Q_hat[h]
+            )
+            keep_s <- is.finite(rule_y_h) &
+              is.finite(band_s$lower) & is.finite(band_s$upper)
+
+            if (any(keep_s)) {
+              rule_accum$cover_scores <- rule_accum$cover_scores +
+                sum(rule_y_h[keep_s] >= band_s$lower[keep_s] &
+                      rule_y_h[keep_s] <= band_s$upper[keep_s])
+              rule_accum$score_scores <- rule_accum$score_scores +
+                sum(
+                  interval_score_cells(rule_y_h[keep_s], band_s$lower[keep_s], band_s$upper[keep_s], alpha)
+                )
+              rule_accum$n_scores <- rule_accum$n_scores + sum(keep_s)
+            }
+
+            st <- aci_state[[m]][[alpha_name]][[h]]
+            eta_now <- calibration[[m]][[alpha_name]]$aci_eta
+
+            for (j in which(!st$used & st$origin + h <= t0)) {
+              st$a_t <- st$a_t + eta_now * (alpha - st$err[j])
+              st$used[j] <- TRUE
+            }
+
+            aci_Q_h <- aci_quantile(calibration[[m]][[alpha_name]]$scores_sorted[[h]], st$a_t)
+            band_a <- conformal_interval(forecast = rule_f_h,
+                                         gamma = rule_gamma_h,
+                                         Q = aci_Q_h)
+            keep_a <- is.finite(rule_y_h) &
+              is.finite(band_a$lower) & is.finite(band_a$upper)
+
+            if (any(keep_a)) {
+              rule_accum$cover_aci <- rule_accum$cover_aci +
+                sum(rule_y_h[keep_a] >= band_a$lower[keep_a] &
+                      rule_y_h[keep_a] <= band_a$upper[keep_a])
+              rule_accum$score_aci <- rule_accum$score_aci +
+                sum(
+                  interval_score_cells(rule_y_h[keep_a], band_a$lower[keep_a], band_a$upper[keep_a], alpha)
+                )
+              rule_accum$n_aci <- rule_accum$n_aci + sum(keep_a)
+            }
+
+            obs_h <- as.numeric(X_eval[, t0 + h])
+            keep_f <- is.finite(obs_h) &
+              is.finite(band_a$lower) & is.finite(band_a$upper)
+
+            if (any(keep_f)) {
+              st$origin <- c(st$origin, t0)
+              st$err <- c(st$err,
+                          mean(obs_h[keep_f] < band_a$lower[keep_f] |
+                                 obs_h[keep_f] > band_a$upper[keep_f]))
+              st$used <- c(st$used, FALSE)
+            }
+
+            aci_state[[m]][[alpha_name]][[h]] <- st
+            aci_record[[m]][[alpha_name]][as.character(t0), h] <- aci_Q_h
+            conformal_accum[[m]][[alpha_name]][[h]] <- rule_accum
+          }
+
           error_h <-
             as.numeric(error_future_mat[, h])
 
@@ -500,6 +657,20 @@ rolling_split_conformal_original_ecp_compact <- function(X,
           accum$score_sum /
           accum$n_interval
 
+        # ECP, CPD and mean interval score from accumulated counts
+        rule_summary <- function(cover, score, n) {
+          if (n > 0) {
+            ecp <- cover / n
+            c(ecp, abs(ecp - (1 - alpha)), score / n)
+          } else {
+            c(NA_real_, NA_real_, NA_real_)
+          }
+        }
+        s_rule <- rule_summary(accum$cover_scores,
+                               accum$score_scores,
+                               accum$n_scores)
+        a_rule <- rule_summary(accum$cover_aci, accum$score_aci, accum$n_aci)
+
         conformal_summary_list[[length(conformal_summary_list) + 1]] <-
           tibble::tibble(
             seed = seed,
@@ -510,9 +681,39 @@ rolling_split_conformal_original_ecp_compact <- function(X,
             d_used = d_method[[m]],
             ECP = ECP,
             CPD = CPD,
-            Score = Score
+            Score = Score,
+            ECP_scores = s_rule[1],
+            CPD_scores = s_rule[2],
+            Score_scores = s_rule[3],
+            ECP_aci = a_rule[1],
+            CPD_aci = a_rule[2],
+            Score_aci = a_rule[3],
+            aci_eta = calibration[[m]][[alpha_name]]$aci_eta
           )
       }
+    }
+  }
+
+  for (m in methods_used)
+  {
+    for (alpha in alpha_set)
+    {
+      alpha_name <- as.character(alpha)
+
+      calibration_list[[length(calibration_list) + 1]] <-
+        tibble::tibble(
+          seed = seed,
+          window_type = window_type,
+          method = m,
+          alpha = alpha,
+          d_used = d_method[[m]],
+          gamma = list(calibration[[m]][[alpha_name]]$gamma),
+          zeta = list(calibration[[m]][[alpha_name]]$zeta),
+          Q_hat = list(calibration[[m]][[alpha_name]]$Q_hat),
+          aci_eta = calibration[[m]][[alpha_name]]$aci_eta,
+          aci_t0 = list(test_steps),
+          aci_Q = list(aci_record[[m]][[alpha_name]])
+        )
     }
   }
 
@@ -534,18 +735,22 @@ rolling_split_conformal_original_ecp_compact <- function(X,
 
 
 
-parallel_sim_forecasting_FARMA_compare_compact <- function(n_rep = 100,
-                                                           grid,
-                                                           h_max = 10,
-                                                           train_ratio = 0.6,
-                                                           valid_ratio = 0.2,
-                                                           alpha_set = c(0.2, 0.05),
-                                                           window_types = c("expanding", "fixed"),
-                                                           Npc = 1,
-                                                           no_grid = 101,
-                                                           far_pve = 0.95,
-                                                           zeta_grid = seq(0.1, 50, length.out = 2496),
-                                                           fracdiff_trim = 100)
+# Ideal simulation: simulate each scenario and run the rolling forecasts in parallel
+simulate_ideal <- function(n_rep = 100,
+                           grid,
+                           h_max = 10,
+                           train_ratio = 0.6,
+                           valid_ratio = 0.2,
+                           alpha_set = c(0.2, 0.05),
+                           window_types = c("expanding", "fixed"),
+                           Npc = 1,
+                           no_grid = 101,
+                           far_pve = 0.95,
+                           zeta_grid = seq(0.1, 50, length.out = 2496),
+                           fracdiff_trim = 100,
+                           farma_residual_ratio_limit = 50,
+                           compact_errors = FALSE,
+                           keep_calibration = TRUE)
 {
   if (!"scenario_id" %in% names(grid))
   {
@@ -635,7 +840,7 @@ parallel_sim_forecasting_FARMA_compare_compact <- function(n_rep = 100,
         for (wtype in window_types)
         {
           out <- tryCatch(
-            rolling_split_conformal_original_ecp_compact(
+            rolling_forecast(
               X = X,
               d_hat = d_i,
               d_hat_far = d_i,
@@ -651,7 +856,8 @@ parallel_sim_forecasting_FARMA_compare_compact <- function(n_rep = 100,
               Npc = Npc,
               far_pve = far_pve,
               zeta_grid = zeta_grid,
-              fracdiff_trim = fracdiff_trim
+              fracdiff_trim = fracdiff_trim,
+              farma_residual_ratio_limit = farma_residual_ratio_limit
             ),
             error = function(e)
               e
@@ -694,12 +900,18 @@ parallel_sim_forecasting_FARMA_compare_compact <- function(n_rep = 100,
 
           if (nrow(out$error_detail) > 0)
           {
+            error_detail_i <- if (compact_errors) {
+              compact_forecast_errors(out$error_detail)
+            } else {
+              out$error_detail
+            }
+
             error_curve_list[[length(error_curve_list) + 1]] <-
-              out$error_detail %>%
+              error_detail_i %>%
               dplyr::mutate(!!!metadata, .before = 1)
           }
 
-          if (nrow(out$calibration_detail) > 0)
+          if (keep_calibration && nrow(out$calibration_detail) > 0)
           {
             calibration_list[[length(calibration_list) + 1]] <-
               out$calibration_detail %>%
@@ -768,6 +980,7 @@ parallel_sim_forecasting_FARMA_compare_compact <- function(n_rep = 100,
 }
 
 
+# Collapse forecast errors into SSE and SAE by horizon
 compact_forecast_errors <- function(error_detail) {
   if (nrow(error_detail) == 0L || !"error" %in% names(error_detail)) {
     return(error_detail)
@@ -807,14 +1020,15 @@ compact_forecast_errors <- function(error_detail) {
     dplyr::summarise(dplyr::across(c(SSE, SAE, n_forecast, n_nonfinite), sum), .groups = "drop")
 }
 
-extract_required_metrics_from_compact_order_method <- function(compact_out,
-                                                               summary_stat = c("both", "mean", "median"),
-                                                               keep_replication_details = FALSE)
+# Summarise simulation output into point, interval, WIS, d and order tables
+summarise_metrics <- function(compact_out,
+                              summary_stat = c("both", "mean", "median"),
+                              keep_replication_details = FALSE)
 {
   summary_stat <- match.arg(summary_stat)
   if (summary_stat == "both") {
-    mean_results <- extract_required_metrics_from_compact_order_method(compact_out, "mean", keep_replication_details)
-    median_results <- extract_required_metrics_from_compact_order_method(compact_out, "median", FALSE)
+    mean_results <- summarise_metrics(compact_out, "mean", keep_replication_details)
+    median_results <- summarise_metrics(compact_out, "median", FALSE)
     # The mean and median summaries share the same grouping keys and the same
     # replication counts, so the median values are attached to the mean table as
     # extra `_median` columns rather than returned as separate tables. The
@@ -829,8 +1043,19 @@ extract_required_metrics_from_compact_order_method <- function(compact_out,
         "RMSE_ratio",
         "MAE_ratio"
       ),
-      interval_summary = c("ECP", "CPD", "Score"),
-      wis_summary = "WIS"
+      interval_summary = c(
+        "ECP",
+        "CPD",
+        "Score",
+        "ECP_scores",
+        "CPD_scores",
+        "Score_scores",
+        "ECP_aci",
+        "CPD_aci",
+        "Score_aci",
+        "aci_eta"
+      ),
+      wis_summary = c("WIS", "WIS_scores", "WIS_aci")
     )
     for (name in names(metric_columns)) {
       mean_table <- mean_results[[name]]
@@ -1075,6 +1300,22 @@ extract_required_metrics_from_compact_order_method <- function(compact_out,
       )
   }
 
+  interval_value_columns <- intersect(
+    c(
+      "ECP",
+      "CPD",
+      "Score",
+      "ECP_scores",
+      "CPD_scores",
+      "Score_scores",
+      "ECP_aci",
+      "CPD_aci",
+      "Score_aci",
+      "aci_eta"
+    ),
+    names(conformal_summary_detail_clean)
+  )
+
   interval_summary <- conformal_summary_detail_clean %>%
     dplyr::group_by(
       scenario_id,
@@ -1091,9 +1332,10 @@ extract_required_metrics_from_compact_order_method <- function(compact_out,
       h
     ) %>%
     dplyr::summarise(
-      ECP = summarise_metric(ECP, na.rm = TRUE),
-      CPD = summarise_metric(CPD, na.rm = TRUE),
-      Score = summarise_metric(Score, na.rm = TRUE),
+      dplyr::across(
+        dplyr::all_of(interval_value_columns),
+        ~ summarise_metric(.x, na.rm = TRUE)
+      ),
       n_rep_used = dplyr::n(),
       .groups = "drop"
     ) %>%
@@ -1126,18 +1368,41 @@ extract_required_metrics_from_compact_order_method <- function(compact_out,
       K = dplyr::n_distinct(alpha),
       alpha_levels = paste(sort(unique(alpha)), collapse = ", "),
       weighted_interval_component = sum((alpha / 2) * Score),
+      weighted_interval_scores = if ("Score_scores" %in% names(dplyr::pick(dplyr::everything())))
+        sum((alpha / 2) * Score_scores)
+      else
+        NA_real_,
+      weighted_interval_aci = if ("Score_aci" %in% names(dplyr::pick(dplyr::everything())))
+        sum((alpha / 2) * Score_aci)
+      else
+        NA_real_,
       .groups = "drop"
     ) %>%
     dplyr::left_join(point_by_rep_raw %>%
                        dplyr::select(dplyr::all_of(wis_keys), MAE), by = wis_keys) %>%
-    dplyr::mutate(WIS = (0.5 * MAE + weighted_interval_component) / (K + 0.5))
+    dplyr::mutate(
+      WIS = (0.5 * MAE + weighted_interval_component) / (K + 0.5),
+      WIS_scores = (0.5 * MAE + weighted_interval_scores) / (K + 0.5),
+      WIS_aci = (0.5 * MAE + weighted_interval_aci) / (K + 0.5)
+    )
+
+  has_rule_wis <- all(c("Score_scores", "Score_aci") %in%
+                        names(conformal_summary_detail_clean))
+
+  if (!has_rule_wis) {
+    wis_by_rep <- wis_by_rep %>%
+      dplyr::select(-weighted_interval_scores,-weighted_interval_aci,
+                    -WIS_scores,-WIS_aci)
+  }
 
   wis_summary <- wis_by_rep %>%
     dplyr::group_by(dplyr::across(dplyr::all_of(c(
       setdiff(wis_keys, c("seed", "sim_seed")), "K", "alpha_levels"
     )))) %>%
     dplyr::summarise(
-      WIS = summarise_metric(WIS, na.rm = TRUE),
+      dplyr::across(dplyr::any_of(c(
+        "WIS", "WIS_scores", "WIS_aci"
+      )), ~ summarise_metric(.x, na.rm = TRUE)),
       n_rep_used = sum(!is.na(WIS)),
       .groups = "drop"
     )

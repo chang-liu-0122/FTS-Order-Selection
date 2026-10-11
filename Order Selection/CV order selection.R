@@ -1,5 +1,6 @@
 select_order_cv_forecast_full <- function(
     X,
+    X_eval = NULL,
     h_max = 10,
     train_ratio = 0.6,
     valid_ratio = 0.2,
@@ -27,6 +28,16 @@ select_order_cv_forecast_full <- function(
 
   if (any(!is.finite(X))) {
     stop("X contains NA, NaN or Inf values.")
+  }
+
+  X_eval <- if (is.null(X_eval)) X else as.matrix(X_eval)
+
+  if (any(!is.finite(X_eval))) {
+    stop("X_eval contains NA, NaN or Inf values.")
+  }
+
+  if (!identical(dim(X_eval), dim(X))) {
+    stop("X_eval must have the same dimensions as X.")
   }
 
   TT <- ncol(X)
@@ -87,7 +98,12 @@ select_order_cv_forecast_full <- function(
     stop("Estimated d is not a single finite value.")
   }
 
-  valid_steps <- seq(train_end, valid_end - h_max)
+  valid_steps <- seq(train_end, valid_end - 1)
+
+  origin_expected <- tibble::tibble(
+    h = seq_len(h_max),
+    n_origin_expected = sapply(seq_len(h_max), function(hh) sum(valid_steps + hh <= valid_end))
+  )
 
   get_centered_history <- function(t0) {
 
@@ -174,6 +190,7 @@ select_order_cv_forecast_full <- function(
     for (k in seq_along(valid_steps)) {
 
       t0 <- valid_steps[k]
+      h_here <- min(h_max, valid_end - t0)
 
       centered_obj <- get_centered_history(t0 = t0)
 
@@ -273,15 +290,15 @@ select_order_cv_forecast_full <- function(
         next
       }
 
-      pred_future_mat <- pred_centered_mat +
+      pred_future_mat <- pred_centered_mat[, seq_len(h_here), drop = FALSE] +
         matrix(
           centered_obj$mean_curve,
           nrow = p_grid,
-          ncol = h_max,
+          ncol = h_here,
           byrow = FALSE
         )
 
-      true_future_mat <- X[, (t0 + 1):(t0 + h_max), drop = FALSE]
+      true_future_mat <- X_eval[, (t0 + 1):(t0 + h_here), drop = FALSE]
 
       error_mat <- true_future_mat - pred_future_mat
 
@@ -301,7 +318,7 @@ select_order_cv_forecast_full <- function(
         p = p_now,
         q = q_now,
         t0 = t0,
-        h = seq_len(h_max),
+        h = seq_len(h_here),
         SSE = apply(error_mat, 2, function(x) sum(x^2, na.rm = TRUE)),
         SAE = apply(error_mat, 2, function(x) sum(abs(x), na.rm = TRUE)),
         n_forecast = apply(error_mat, 2, function(x) sum(is.finite(x)))
@@ -361,7 +378,8 @@ select_order_cv_forecast_full <- function(
     dplyr::mutate(
       RMSE = sqrt(SSE / n_forecast),
       MAE = SAE / n_forecast
-    )
+    ) |>
+    dplyr::left_join(origin_expected, by = "h")
 
   cv_overall <- cv_horizon |>
     dplyr::group_by(p, q) |>
@@ -370,15 +388,15 @@ select_order_cv_forecast_full <- function(
       mean_MAE = mean(MAE, na.rm = TRUE),
       n_valid_horizons = sum(is.finite(RMSE)),
       min_n_origin = min(n_origin, na.rm = TRUE),
+      n_complete_horizons = sum(n_origin == n_origin_expected, na.rm = TRUE),
       min_RMSE = min(RMSE, na.rm = TRUE),
       max_RMSE = max(RMSE, na.rm = TRUE),
       .groups = "drop"
     ) |>
     dplyr::mutate(
-      n_origin_expected = length(valid_steps),
       selection_score = dplyr::if_else(
         n_valid_horizons == h_max &
-          min_n_origin == n_origin_expected,
+          n_complete_horizons == h_max,
         selection_score,
         Inf
       )
@@ -405,10 +423,10 @@ select_order_cv_forecast_full <- function(
         0L,
         as.integer(min_n_origin)
       ),
-      n_origin_expected = dplyr::if_else(
-        is.na(n_origin_expected),
-        length(valid_steps),
-        as.integer(n_origin_expected)
+      n_complete_horizons = dplyr::if_else(
+        is.na(n_complete_horizons),
+        0L,
+        as.integer(n_complete_horizons)
       )
     ) |>
     dplyr::arrange(selection_score, p + q, p, q)
