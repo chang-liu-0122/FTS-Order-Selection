@@ -24,3 +24,7 @@ Forecasting/sim_results/
 # Unified simulation results exceed GitHub's 100 MB per-file limit; kept local only.
 Forecasting/unified_raw.rds
 Forecasting/unified_summary.rds
+
+# Package and poster, kept out of this repository
+ffarfima Package/
+MQ_poster.pdf
