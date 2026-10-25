@@ -213,3 +213,19 @@ Department of Actuarial Studies and Business Analytics
 Macquarie University
 
 Email: hanlin.shang@mq.edu.au
+
+---
+
+### Samuel Müller
+
+Macquarie University
+
+Email: samuel.muller@mq.edu.au
+
+---
+
+### Garth Tarr
+
+University of Sydney
+
+Email: garth.tarr@sydney.edu.au
