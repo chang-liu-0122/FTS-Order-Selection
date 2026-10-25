@@ -558,8 +558,8 @@ tab_wis_header <- function(key_labels) {
 tab_conformal_wide <- function(interval_df, caption, label, tabcolsep = "7pt", horizons = c(1, 5, 10)) {
   vars <- c("ECP", "ECP_scores", "ECP_aci", "CPD", "CPD_scores", "CPD_aci", "Score", "Score_scores", "Score_aci")
   d <- aggregate(interval_df[, vars], by = list(alpha = interval_df$alpha, h = interval_df$h), FUN = mean)
-  cols <- list(ECP = vars[1:3], CPD = vars[4:6], IS = vars[7:9])
-  fmt <- list(ECP = tab_f4, CPD = tab_f4, IS = tab_f3)
+  cols <- list(ECP = vars[1:3], CPD = vars[4:6], MIS = vars[7:9])
+  fmt <- list(ECP = tab_f4, CPD = tab_f4, MIS = tab_f3)
   rows <- character(0)
   for (pn in names(cols)) {
     if (pn != "ECP") rows <- c(rows, "\\midrule")

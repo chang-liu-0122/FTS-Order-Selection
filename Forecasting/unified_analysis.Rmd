@@ -1836,7 +1836,7 @@ combine_four_unified_score_ratio_models_shared_axes <- function(
     width = 16,
     height = 12,
     y_limits = NULL,
-    y_axis_label = "IS ratio to FARFIMA(1,1,0)") {
+    y_axis_label = "MIS ratio to FARFIMA(1,1,0)") {
   combine_four_unified_rmse_ratio_models(
     df = df,
     file_name = file_name,
@@ -1928,7 +1928,7 @@ p_unified_score_ratio_11_95 <-
   ) +
   labs(
     x = "Forecast horizon h",
-    y = "95% IS ratio to FARFIMA(1,1,0)",
+    y = "95% MIS ratio to FARFIMA(1,1,0)",
     colour = "Order selection",
     linetype = "Order selection",
     shape = "Order selection"
@@ -2165,7 +2165,7 @@ unified_interval_latex <- tab_longtable(
     list(
       list(metric = "ECP", col = NA, label = "ECP"),
       list(metric = "CPD", col = "red", label = "CPD"),
-      list(metric = "Score", col = "blue", label = "IS")
+      list(metric = "Score", col = "blue", label = "MIS")
     )
   ),
   tabcolsep = "5pt"

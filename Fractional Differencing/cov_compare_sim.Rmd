@@ -69,7 +69,11 @@ saveRDS(covariance_matrix_comparison_FAR, "covariance_matrix_comparison_FAR.rds"
 - Data processing
 
 ```{r}
-result_d_FAR_comparison = readRDS("covariance_matrix_comparison_FAR.rds")
+result_d_FAR_comparison = bind_rows(
+  readRDS("covariance_matrix_comparison_FAR.rds"),
+  readRDS("covariance_matrix_comparison_FAR_complmentary.rds")
+) %>%
+  filter(d_true > 0)
 
 df_raw_line_FAR <- result_d_FAR_comparison %>%
   pivot_longer(
@@ -238,7 +242,7 @@ ggsave(
   file.path(memory_plot_dir, "Cov_LW_FAR.pdf"),
   p_raw_whittle_FAR,
   width = 10,
-  height = 7.5,
+  height = 13,
   dpi = 1200,
   bg = "white"
 )
@@ -247,7 +251,7 @@ ggsave(
   file.path(memory_plot_dir, "Cov_DFA_FAR.pdf"),
   p_raw_peng_FAR,
   width = 10,
-  height = 7.5,
+  height = 13,
   dpi = 1200,
   bg = "white"
 )
@@ -288,7 +292,11 @@ saveRDS(covariance_matrix_comparison_FARMA, "covariance_matrix_comparison_FARMA.
 - Data Processing
 
 ```{r}
-covariance_matrix_comparison_FARMA = readRDS("covariance_matrix_comparison_FARMA.rds")
+covariance_matrix_comparison_FARMA = bind_rows(
+  readRDS("covariance_matrix_comparison_FARMA.rds"),
+  readRDS("covariance_matrix_comparison_FARMA_supplementary.rds")
+) %>%
+  filter(d_true > 0)
 
 df_raw_line_FARMA <- covariance_matrix_comparison_FARMA %>%
   pivot_longer(
@@ -505,7 +513,7 @@ ggsave(
   file.path(memory_plot_dir, "Cov_LW_FARMA_MA_0.5.pdf"),
   p_cov_whittle_FARMA_05,
   width = 10,
-  height = 7.5,
+  height = 13,
   dpi = 1200,
   bg = "white"
 )
@@ -514,7 +522,7 @@ ggsave(
   file.path(memory_plot_dir, "Cov_DFA_FARMA_MA_0.5.pdf"),
   p_cov_peng_FARMA_05,
   width = 10,
-  height = 7.5,
+  height = 13,
   dpi = 1200,
   bg = "white"
 )

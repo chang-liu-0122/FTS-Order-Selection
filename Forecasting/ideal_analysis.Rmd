@@ -1213,7 +1213,7 @@ combine_four_score_ratio_models_shared_axes <- function(df,
                                                         width = 16,
                                                         height = 12,
                                                         y_limits = NULL,
-                                                        y_axis_label = "IS ratio") {
+                                                        y_axis_label = "MIS ratio") {
   combine_four_forecast_models_shared_axes(
     df = df,
     models = models,
@@ -1252,7 +1252,7 @@ p_score_ratio_95 <- combine_four_score_ratio_models_shared_axes(
   file_name = NULL,
   width = 16,
   height = 14,
-  y_axis_label = "IS ratio to FARFIMA(1,1,0)"
+  y_axis_label = "MIS ratio to FARFIMA(1,1,0)"
 )
 
 score_ratio_80 <- make_score_ratio_summary(
@@ -1276,7 +1276,7 @@ p_score_ratio_80 <- combine_four_score_ratio_models_shared_axes(
   file_name = file.path(ideal_plot_dir, "forecast_score_ratio_80_2x2.pdf"),
   width = 16,
   height = 14,
-  y_axis_label = "IS ratio to FARFIMA(1,1,0)"
+  y_axis_label = "MIS ratio to FARFIMA(1,1,0)"
 )
 
 ```
@@ -1616,7 +1616,7 @@ p_rule_ecp_80 <- combine_four_rule_models_shared_axes(
 p_rule_is_80 <- combine_four_rule_models_shared_axes(
   df = rule_data_80,
   value_col = "IS",
-  y_axis_label = "IS",
+  y_axis_label = "MIS",
   free_y = TRUE,
   file_name = file.path(ideal_plot_dir, "forecast_conformal_is_80_2x2.pdf")
 )
@@ -1669,7 +1669,7 @@ ideal_interval_latex <- tab_longtable(
     list(
       list(metric = "ECP", col = NA, label = "ECP"),
       list(metric = "CPD", col = "red", label = "CPD"),
-      list(metric = "Score", col = "blue", label = "IS")
+      list(metric = "Score", col = "blue", label = "MIS")
     )
   ),
   tabcolsep = "9pt"
