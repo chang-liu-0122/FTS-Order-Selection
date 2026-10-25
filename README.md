@@ -64,16 +64,13 @@ The folders follow the steps of the framework:
 | `Sieve-bootstrapped corrected LW estimation.R` | Bootstrap bias-corrected estimators: BC-LPWN<sub>1</sub> and BC-LPWN<sub>2</sub> |
 | `Covariance Matrix.R` | Covariance-type operators for the leading eigenfunction: the empirical covariance operator (Covar) and the long-run covariance operators (RS and LRS) |
 | `cov_compare_sim.Rmd` | Simulation comparing LW and DFA under the three covariance-type operators |
-| `demo differencing.Rmd` | Illustration of fractional differencing for scalar and functional time series |
-| `hurst.R` | Hurst exponent estimators from the fArma package, kept for reference |
 
 ## Simulation Result Files
 
 | File | Description |
 |---|---|
-| `covariance_matrix_comparison_FAR.rds`, `covariance_matrix_comparison_FAR_complmentary.rds` | Results for FARFIMA(1,d,0) |
+| `covariance_matrix_comparison_FAR.rds`, `covariance_matrix_comparison_FAR_complementary.rds` | Results for FARFIMA(1,d,0) |
 | `covariance_matrix_comparison_FARMA.rds`, `covariance_matrix_comparison_FARMA_supplementary.rds` | Results for FARFIMA(1,d,1) |
-| `LPWN_LW_DFA_sim_comparison_FAR.rds`, `LPWN_LW_DFA_sim_comparison_FARMA.rds` | Comparison of LW, DFA and LPWN |
 
 Figures are in `Sim Plots`.
 
@@ -90,7 +87,6 @@ Figures are in `Sim Plots`.
 | `CV order selection.R` | Forecast-based cross-validation (CV) |
 | `Sim Order Selection.R` | Simulation comparing the order selection methods |
 | `Order selection AIC simulation.Rmd` | Order selection simulation study and its figures |
-| `Order Selection WN simulation.Rmd` | Checks of the functional white-noise test |
 
 ## Simulation Result Files
 
@@ -107,7 +103,6 @@ Figures are in `Sim Plots`.
 | File | Description |
 |---|---|
 | `Kuenzer FARMA Estimation.R` | Functional Hannan–Rissanen estimation of the FARMA operators (Kuenzer, 2024), used in all other steps |
-| `EstimationFARMA.R` | Comparison of the FARMA estimators of Kuenzer and Kühnert |
 
 ---
 
@@ -149,7 +144,6 @@ The results of the unified framework exceed the GitHub file size limit and are n
 | File | Description |
 |---|---|
 | `Empirical analysis.Rmd` | Data processing, FACF, forecasts and their evaluation for England and Wales fertility and French female and male mortality |
-| `save_function.R` | Functions for saving figures |
 
 ## Datasets
 

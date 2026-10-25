@@ -41,7 +41,7 @@ source("DGP non-stationary FTS/sim_FARMA.R")
 source("Operator Estimation/Kuenzer FARMA Estimation.R")
 source("Order Selection/Marginal BIC.R")
 source("Order Selection/WN test order selection.R")
-source("Order Selection/Sim order selection.R")
+source("Order Selection/Sim Order Selection.R")
 source("Fractional Differencing/Covariance Matrix.R")
 source("Forecasting/forecast_plot_helpers.R")
 

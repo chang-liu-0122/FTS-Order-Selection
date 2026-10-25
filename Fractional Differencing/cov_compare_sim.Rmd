@@ -71,7 +71,7 @@ saveRDS(covariance_matrix_comparison_FAR, "covariance_matrix_comparison_FAR.rds"
 ```{r}
 result_d_FAR_comparison = bind_rows(
   readRDS("covariance_matrix_comparison_FAR.rds"),
-  readRDS("covariance_matrix_comparison_FAR_complmentary.rds")
+  readRDS("covariance_matrix_comparison_FAR_complementary.rds")
 ) %>%
   filter(d_true > 0)
 
