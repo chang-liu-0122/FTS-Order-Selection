@@ -325,7 +325,7 @@ make_order_accuracy_summary <- function(df)
       method = case_when(
         as.character(method) %in%
           c("WN_Test", "WN test", "Box Jenkins") ~
-          "Box Jenkins",
+          "Functional Box-Jenkins",
 
         as.character(method) %in%
           c("Adaptive_IC", "Adaptive IC", "Functional IC") ~
@@ -371,7 +371,7 @@ make_order_accuracy_summary <- function(df)
       method = factor(
         method,
         levels = c(
-          "Box Jenkins",
+          "Functional Box-Jenkins",
           "Functional IC",
           "Auto Functional IC"
         )
@@ -502,19 +502,19 @@ order_analysis_long <- bind_rows(
 order_acc_summary <- make_order_accuracy_summary(order_analysis_long)
 
 method_cols <- c(
-  "Box Jenkins" = "#1B9E77",
+  "Functional Box-Jenkins" = "#1B9E77",
   "Functional IC" = "#D95F02",
   "Auto Functional IC" = "#7570B3"
 )
 
 method_ltys <- c(
-  "Box Jenkins" = "longdash",
+  "Functional Box-Jenkins" = "longdash",
   "Functional IC" = "solid",
   "Auto Functional IC" = "dashed"
 )
 
 method_shapes <- c(
-  "Box Jenkins" = 15,
+  "Functional Box-Jenkins" = 15,
   "Functional IC" = 16,
   "Auto Functional IC" = 17
 )

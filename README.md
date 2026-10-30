@@ -1,19 +1,18 @@
 <br />
 <div align="center">
-  <a href="https://www.mq.edu.au">
-    <img src="Macquarie_University_logo.png" alt="Macquarie University" width="360">
-  </a>
+  <img src="Macquarie_University_logo.png" alt="Macquarie University" width="161">
+  &emsp;&emsp;
+  <img src="University_of_Sydney_logo.png" alt="The University of Sydney" width="136">
 
-<h3 align="center">
-Order Selection and Forecasting in Long-Memory Functional Time Series
-</h3>
+  <h3 align="center">Order Selection and Forecasting in Long-Memory Functional Time Series</h3>
 
-<p align="center">
-Chang Liu
-<br />
-Supervisors: Han Lin Shang · Samuel Müller · Garth Tarr
-</p>
-
+  <p align="center">
+    Chang Liu
+    <br />
+    Supervisors: Han Lin Shang · Samuel Müller · Garth Tarr
+    <br />
+    <a href="https://github.com/chang-liu-0122/farfima"><strong>R package »</strong></a>
+  </p>
 </div>
 
 ---
@@ -24,7 +23,9 @@ Functional time series (FTS) are increasingly used to model data observed over c
 
 This thesis studies order selection for FARMA models within a framework that accommodates long-memory and non-stationary functional time series, where the functional autoregressive fractionally integrated moving-average (FARFIMA) model is used to capture stationary and non-stationary long memory. The proposed framework consists of three main steps. First, the memory parameter is estimated and fractional differencing is used to obtain a stationary representation of the process. Second, order selection and FARMA model fitting are conducted in this stationary domain. Finally, forecasts with conformal prediction intervals are obtained on the original non-stationary scale.
 
-This thesis makes two main contributions. First, two order selection approaches for FARFIMA models in long-memory functional time series are developed: a functional Box–Jenkins procedure based on residual diagnostics and an adaptive functional Hannan–Quinn information criterion. Second, a unified framework is proposed that integrates memory estimation, order selection, model estimation, and forecasting. Simulation studies show that the functional information criterion provides the most stable order selection, and that both memory estimation and short-memory order selection improve forecasts relative to a fixed benchmark, with the former giving larger gains at longer horizons and the latter mainly at short horizons. Applications to England and Wales fertility and French female and male mortality rates illustrate the practical usefulness of the proposed methodology.
+This thesis makes two main contributions. First, two order selection approaches for FARFIMA models in long-memory functional time series are developed: a functional Box–Jenkins procedure based on residual diagnostics and an adaptive functional Hannan–Quinn information criterion. Second, a unified framework is proposed that integrates memory estimation, order selection, model estimation, and forecasting. Simulation studies show that the functional information criterion provides the most stable order selection, and that both memory estimation and short-memory order selection improve forecasts relative to a fixed benchmark, with the former giving larger gains at longer horizons and the latter mainly at short horizons. Applications to England and Wales fertility rates and French female and male mortality rates illustrate the practical usefulness of the proposed methodology.
+
+Overall, this thesis provides a coherent framework for long-memory functional time series analysis that centres on order selection while accommodating long-memory behaviour and supporting accurate forecasting.
 
 ---
 
@@ -41,6 +42,8 @@ The folders follow the steps of the framework:
 | 5. Forecasting | `Forecasting` |
 | 6. Empirical data analysis | `Empirical Study` |
 | 7. Shiny app | `Shiny App` |
+
+The R package `farfima`, which implements these methods, has its own repository: <https://github.com/chang-liu-0122/farfima>.
 
 ---
 
@@ -72,7 +75,7 @@ The folders follow the steps of the framework:
 | `covariance_matrix_comparison_FAR.rds`, `covariance_matrix_comparison_FAR_complementary.rds` | Results for FARFIMA(1,d,0) |
 | `covariance_matrix_comparison_FARMA.rds`, `covariance_matrix_comparison_FARMA_supplementary.rds` | Results for FARFIMA(1,d,1) |
 
-Figures are in `Sim Plots`.
+The thesis reports these results in tables, so the figures that the notebook saves to `Sim Plots` are not included.
 
 ---
 
@@ -124,8 +127,9 @@ Figures are in `Sim Plots`.
 | File | Description |
 |---|---|
 | `ideal_raw.rds`, `ideal_summary.rds` | Results of forecasting with known memory and order |
+| `unified_summary.rds` | Summary results of the unified framework |
 
-The results of the unified framework exceed the GitHub file size limit and are not included. They are produced by `unified_analysis.Rmd`.
+The raw results of the unified framework (`unified_raw.rds`) exceed the GitHub file size limit and are not included. They are produced by `unified_analysis.Rmd`.
 
 ## Plot Folders
 
@@ -133,7 +137,6 @@ The results of the unified framework exceed the GitHub file size limit and are n
 |---|---|
 | `Sim Plots Ideal` | Figures for forecasting with known memory and order |
 | `Sim Plots Unified` | Figures for the unified framework |
-| `Plots Slides` | Figures for presentations |
 
 ---
 
@@ -143,7 +146,7 @@ The results of the unified framework exceed the GitHub file size limit and are n
 
 | File | Description |
 |---|---|
-| `Empirical analysis.Rmd` | Data processing, FACF, forecasts and their evaluation for England and Wales fertility and French female and male mortality |
+| `Empirical analysis.Rmd` | Data processing, fACF, forecasts and their evaluation for England and Wales fertility and French female and male mortality |
 
 ## Datasets
 
@@ -170,8 +173,10 @@ The simulation and empirical results can be explored in the Shiny app: <https://
 |---|---|
 | `app.R` | The Shiny app |
 | `intro_pages.R` | Introduction pages of the app |
+| `forecast_plot_helpers.R` | Copy of `Forecasting/forecast_plot_helpers.R` used by the app |
 | `prepare_app_data.R` | Prepares the app data from the simulation results |
 | `app_data.rds` | Data used by the app |
+| `rsconnect` | Deployment settings for shinyapps.io |
 
 ---
 

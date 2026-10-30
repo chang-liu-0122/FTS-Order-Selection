@@ -14,17 +14,10 @@
 *_cache/
 *_files/
 
-# Raw file exceeds GitHub's 100 MB per-file limit.
-# Keep the local copy; document or distribute it separately (or use Git LFS).
-Empirical Study/data/opsd_time_series_60min_2020.csv
-
-# Timestamped simulation output from Forecasting/run_unified_simulation.R
-Forecasting/sim_results/
-
-# Unified simulation results exceed GitHub's 100 MB per-file limit; kept local only.
+# Raw unified simulation output exceeds GitHub's 100 MB per-file limit; kept local only.
 Forecasting/unified_raw.rds
-Forecasting/unified_summary.rds
 
 # Package and poster, kept out of this repository
-ffarfima Package/
+farfima Package revision1/
+farfima_*.tar.gz
 MQ_poster.pdf

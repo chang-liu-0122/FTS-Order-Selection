@@ -121,7 +121,7 @@ pipeline_metrics <- summarise_metrics(
   keep_replication_details = TRUE
 )
 
-saveRDS(pipeline_metrics, file.path(project_root, "Forecasting", "unified_summary.rds"))
+saveRDS(pipeline_metrics, file.path(project_root, "Forecasting", "unified_summary.rds"), compress = "xz")
 ```
 
 
